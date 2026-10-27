@@ -1,49 +1,26 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
+import { z } from "zod"
 
-import {
-  listMySubscriptions,
-  listPlans,
-  pauseSubscription,
-  resumeSubscription,
-  startSubscription,
-} from "./subscriptions.service.js"
-import {
-  subscriptionActionBodySchema,
-  subscriptionPlanParamSchema,
-  subscriptionStartBodySchema,
-} from "./subscriptions.schema.js"
+import { getPlanById, listMySubscriptions, listPlans } from "./subscriptions.service.js"
+
+const plansQuery = z.object({ includeInactive: z.coerce.boolean().default(false) })
+const planParams = z.object({ planId: z.coerce.number().int().positive() })
 
 export function buildSubscriptionsController(app: FastifyInstance) {
   return {
-    plans: async (_request: FastifyRequest, reply: FastifyReply) => {
-      const result = await listPlans()
-      return reply.send(result)
+    plans: async (request: FastifyRequest, reply: FastifyReply) => {
+      const query = plansQuery.safeParse(request.query)
+      return reply.send(await listPlans(app, query.success ? query.data.includeInactive : false))
+    },
+    plan: async (request: FastifyRequest, reply: FastifyReply) => {
+      const params = planParams.safeParse(request.params)
+      if (!params.success) {
+        throw app.httpErrors.badRequest("planId must be a positive integer")
+      }
+      return reply.send(await getPlanById(app, params.data.planId))
     },
     me: async (request: FastifyRequest, reply: FastifyReply) => {
-      const result = await listMySubscriptions(app, request.user.sub)
-      return reply.send(result)
-    },
-    start: async (request: FastifyRequest, reply: FastifyReply) => {
-      const body = subscriptionStartBodySchema.parse(request.body)
-      const result = await startSubscription(
-        app,
-        request.user.sub,
-        body.planId,
-        body.txHash,
-      )
-      return reply.code(201).send(result)
-    },
-    pause: async (request: FastifyRequest, reply: FastifyReply) => {
-      const { planId } = subscriptionPlanParamSchema.parse(request.params)
-      const body = subscriptionActionBodySchema.parse(request.body)
-      const result = await pauseSubscription(app, request.user.sub, planId, body.txHash)
-      return reply.send(result)
-    },
-    resume: async (request: FastifyRequest, reply: FastifyReply) => {
-      const { planId } = subscriptionPlanParamSchema.parse(request.params)
-      const body = subscriptionActionBodySchema.parse(request.body)
-      const result = await resumeSubscription(app, request.user.sub, planId, body.txHash)
-      return reply.send(result)
+      return reply.send(await listMySubscriptions(app, request.user.sub))
     },
   }
 }

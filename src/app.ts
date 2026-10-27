@@ -21,7 +21,9 @@ import { registerSubscriptionsRoutes } from "./modules/subscriptions/subscriptio
 import { registerTransactionsRoutes } from "./modules/transactions/transactions.routes.js"
 import { registerUsersRoutes } from "./modules/users/users.routes.js"
 import { registerWebhooksRoutes } from "./modules/webhooks/webhooks.routes.js"
-import { registerSalaryStreamingRoutes } from "./modules/salary-streaming/salary-streaming.routes.js"
+import { registerPayrollRoutes } from "./modules/payroll/payroll.routes.js"
+import { registerDashboardRoutes } from "./modules/dashboard/dashboard.routes.js"
+import { registerStellarRoutes } from "./modules/stellar/stellar.routes.js"
 import { prismaPlugin } from "./plugins/prisma.js"
 import { redisPlugin } from "./plugins/redis.js"
 import { sensiblePlugin } from "./plugins/sensible.js"
@@ -58,9 +60,25 @@ export async function buildApp(): Promise<FastifyInstance> {
     openapi: {
       info: {
         title: "Rubbi API",
-        version: "0.1.0",
-        description: "Rubbi backend API",
+        version: "0.2.0",
+        description:
+          "Rubbi backend on Stellar: SEP-10 auth, chain mirrors (vault, subscriptions, payroll), " +
+          "card loads/unloads through the vault, and a mock or Sudo card issuer.",
       },
+      tags: [
+        { name: "system" },
+        { name: "auth", description: "SEP-10 web authentication" },
+        { name: "users" },
+        { name: "cards", description: "Card, loads and unloads" },
+        { name: "deposits" },
+        { name: "transactions", description: "Wallet and card ledgers" },
+        { name: "subscriptions", description: "Mirror of the subscriptions contract" },
+        { name: "payroll", description: "Mirror of the payroll contract" },
+        { name: "dashboard" },
+        { name: "stellar", description: "Public network configuration" },
+        { name: "webhooks", description: "Card issuer callbacks" },
+        { name: "dev", description: "Development only" },
+      ],
     },
   })
 
@@ -116,7 +134,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     await registerDepositsRoutes(api)
     await registerTransactionsRoutes(api)
     await registerSubscriptionsRoutes(api)
-    await registerSalaryStreamingRoutes(api)
+    await registerPayrollRoutes(api)
+    await registerDashboardRoutes(api)
+    await registerStellarRoutes(api)
     await registerWebhooksRoutes(api)
     if (shouldRegisterDevRoutes(env)) {
       await registerDevRoutes(api)

@@ -1,14 +1,15 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 import { Account, BASE_FEE, Keypair, Networks, Operation, TransactionBuilder, WebAuth } from "@stellar/stellar-sdk"
-import { makeHttpErrors, makeJwt, seedEnv } from "./helpers.js"
+import { ZERO_SEED, makeHttpErrors, makeJwt, seedEnv } from "./helpers.js"
 
-const server = Keypair.random()
+// The server key must match SEP10_SIGNING_SECRET in TEST_ENV: the config
+// module is evaluated once per test process, so every file shares it.
+const server = Keypair.fromSecret(ZERO_SEED)
 const client = Keypair.random()
 const stranger = Keypair.random()
 
 beforeAll(() => {
   seedEnv()
-  process.env.SEP10_SIGNING_SECRET = server.secret()
 })
 
 function makeApp() {
