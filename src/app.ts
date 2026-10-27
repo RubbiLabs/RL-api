@@ -10,6 +10,9 @@ import { Worker } from "bullmq"
 import { env } from "./config/index.js"
 import { SudoCardIssuer } from "./lib/card-issuer/sudo.adapter.js"
 import { closeQueueResources } from "./lib/queue.js"
+import { contractIds, rpcServer } from "./lib/stellar/client.js"
+import { getPlan, getSchedule, getSubscription } from "./lib/stellar/contracts.js"
+import { Indexer } from "./lib/stellar/indexer.js"
 import { registerAuthRoutes } from "./modules/auth/auth.routes.js"
 import { registerCardsRoutes } from "./modules/cards/cards.routes.js"
 import { registerDepositsRoutes } from "./modules/deposits/deposits.routes.js"
@@ -111,12 +114,29 @@ export async function buildApp(): Promise<FastifyInstance> {
   }, { prefix: "/api/v1" })
 
   let workers: Worker[] = []
+  let indexer: Indexer | null = null
 
   app.addHook("onReady", async () => {
     workers = [startTopupWorker(app)]
+
+    // Background chain work is not started under NODE_ENV=test; the indexer
+    // and keeper are exercised directly by their own tests.
+    if (env.NODE_ENV !== "test") {
+      indexer = new Indexer({
+        prisma: app.prisma,
+        rpc: rpcServer,
+        reads: { getPlan, getSchedule, getSubscription },
+        log: app.log.child({ component: "indexer" }),
+        contractIds: [contractIds.vault, contractIds.subscriptions, contractIds.payroll],
+        pollIntervalMs: env.INDEXER_POLL_INTERVAL_MS,
+        startLedger: env.INDEXER_START_LEDGER,
+      })
+      indexer.start()
+    }
   })
 
   app.addHook("onClose", async () => {
+    indexer?.stop()
     await Promise.all(workers.map((worker) => worker.close()))
     await closeQueueResources()
   })
