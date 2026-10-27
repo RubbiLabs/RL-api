@@ -1,10 +1,16 @@
-import { Prisma, TransactionType } from "@prisma/client"
+import { BalanceAccount, Prisma, TransactionType } from "@prisma/client"
 import { FastifyInstance } from "fastify"
 import { createHmac, timingSafeEqual } from "node:crypto"
 
 import { env } from "../../config/index.js"
 
-interface CardIssuerWebhookBody {
+/**
+ * Card issuer webhooks move `cardBalance` only. Card money has already been
+ * moved on-chain when the card was loaded (see cards.service.ts), so a spend
+ * or a merchant refund never touches the vault.
+ */
+
+export interface CardIssuerWebhookBody {
   _id?: string
   type?: string
   event?: string
@@ -35,18 +41,13 @@ function verifySignature(rawBody: string, signatureHeader: string | undefined) {
     return false
   }
 
-  const normalizedSignature = signatureHeader
-    .trim()
-    .replace(/^sha256=/i, "")
+  const normalizedSignature = signatureHeader.trim().replace(/^sha256=/i, "")
 
   if (!/^[a-f0-9]{64}$/i.test(normalizedSignature)) {
     return false
   }
 
-  const expected = createHmac("sha256", env.SUDO_WEBHOOK_SECRET)
-    .update(rawBody)
-    .digest()
-
+  const expected = createHmac("sha256", env.SUDO_WEBHOOK_SECRET).update(rawBody).digest()
   const receivedBuffer = Buffer.from(normalizedSignature, "hex")
 
   if (receivedBuffer.length !== expected.length) {
@@ -60,9 +61,7 @@ function extractWebhookData(body: CardIssuerWebhookBody) {
   const object = body.data?.object
 
   const cardField = object?.card
-  const cardId =
-    body.data?.cardId ??
-    (typeof cardField === "string" ? cardField : cardField?._id)
+  const cardId = body.data?.cardId ?? (typeof cardField === "string" ? cardField : cardField?._id)
 
   const amountInput = object?.amount ?? body.data?.amount
   const merchantName = object?.merchant?.name ?? body.data?.merchantName
@@ -72,15 +71,7 @@ function extractWebhookData(body: CardIssuerWebhookBody) {
   const transactionType = object?.transactionMetadata?.type ?? object?.type
   const eventId = object?._id ?? body.data?._id ?? body._id
 
-  return {
-    cardId,
-    amountInput,
-    merchantName,
-    merchantCategory,
-    eventType,
-    transactionType,
-    eventId,
-  }
+  return { cardId, amountInput, merchantName, merchantCategory, eventType, transactionType, eventId }
 }
 
 export async function handleCardIssuerWebhook(
@@ -93,24 +84,17 @@ export async function handleCardIssuerWebhook(
     throw app.httpErrors.unauthorized("Invalid webhook signature")
   }
 
-  const {
-    cardId,
-    amountInput,
-    merchantName,
-    merchantCategory,
-    eventType,
-    transactionType,
-    eventId,
-  } = extractWebhookData(body)
+  const { cardId, amountInput, merchantName, merchantCategory, eventType, transactionType, eventId } =
+    extractWebhookData(body)
 
   if (!cardId || amountInput === undefined) {
     throw app.httpErrors.badRequest("Invalid webhook payload")
   }
 
   const amountParsed = new Prisma.Decimal(String(amountInput))
-  const amountRubbi = amountParsed.lessThan(0) ? amountParsed.mul(-1) : amountParsed
+  const amount = amountParsed.lessThan(0) ? amountParsed.mul(-1) : amountParsed
 
-  if (amountRubbi.lte(0)) {
+  if (amount.lte(0)) {
     return { ok: true, ignored: true, reason: "non-positive amount" }
   }
 
@@ -124,16 +108,8 @@ export async function handleCardIssuerWebhook(
   }
 
   if (eventType === "authorization.request") {
-    const responseCode = card.user.rubbiBalance.greaterThanOrEqualTo(amountRubbi)
-      ? "00"
-      : "51"
-
-    return {
-      statusCode: 200,
-      data: {
-        responseCode,
-      },
-    }
+    const responseCode = card.user.cardBalance.greaterThanOrEqualTo(amount) ? "00" : "51"
+    return { statusCode: 200, data: { responseCode } }
   }
 
   const spendLikeEvent = eventType === "card.charge" || eventType === "transaction.created"
@@ -141,54 +117,64 @@ export async function handleCardIssuerWebhook(
     return { ok: true, ignored: true, reason: `unsupported event: ${eventType}` }
   }
 
-  const isKnownCredit = transactionType === "refund" || transactionType === "reversal"
-  if (isKnownCredit) {
-    return { ok: true, ignored: true, reason: `credit transaction type: ${transactionType}` }
-  }
-
   if (eventId) {
-    const lock = await app.redis.set(
-      `webhook:sudo:${eventId}`,
-      "1",
-      "EX",
-      86_400,
-      "NX",
-    )
-
+    const lock = await app.redis.set(`webhook:card-issuer:${eventId}`, "1", "EX", 86_400, "NX")
     if (lock !== "OK") {
       return { ok: true, duplicate: true }
     }
   }
 
-  if (card.user.rubbiBalance.lessThan(amountRubbi)) {
-    throw app.httpErrors.badRequest("Insufficient RUBBI balance")
+  const isCredit = transactionType === "refund" || transactionType === "reversal"
+
+  if (isCredit) {
+    // Merchant refund or reversal: credit the card balance only.
+    await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const updatedUser = await tx.user.update({
+        where: { id: card.user.id },
+        data: { cardBalance: { increment: amount } },
+        select: { cardBalance: true },
+      })
+
+      await tx.transaction.create({
+        data: {
+          userId: card.user.id,
+          type: TransactionType.REFUND,
+          account: BalanceAccount.CARD,
+          amount,
+          balanceAfter: updatedUser.cardBalance,
+          description: `${merchantName ?? "Card"} ${transactionType}`,
+          metadata: { merchantName, merchantCategory, event: eventType, transactionType, webhookEventId: eventId },
+        },
+      })
+    })
+
+    return { ok: true, credited: true }
+  }
+
+  if (card.user.cardBalance.lessThan(amount)) {
+    throw app.httpErrors.badRequest("Insufficient card balance")
   }
 
   await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const updatedUser = await tx.user.update({
       where: { id: card.user.id },
-      data: {
-        rubbiBalance: {
-          decrement: amountRubbi,
-        },
-      },
-      select: { rubbiBalance: true },
+      data: { cardBalance: { decrement: amount } },
+      select: { cardBalance: true },
     })
+
+    if (updatedUser.cardBalance.isNegative()) {
+      throw app.httpErrors.badRequest("Insufficient card balance")
+    }
 
     await tx.transaction.create({
       data: {
         userId: card.user.id,
         type: TransactionType.SPEND,
-        amountRubbi: amountRubbi.mul(-1),
-        balanceAfter: updatedUser.rubbiBalance,
+        account: BalanceAccount.CARD,
+        amount: amount.mul(-1),
+        balanceAfter: updatedUser.cardBalance,
         description: `${merchantName ?? "Card"} charge`,
-        metadata: {
-          merchantName,
-          merchantCategory,
-          event: eventType,
-          transactionType,
-          webhookEventId: eventId,
-        },
+        metadata: { merchantName, merchantCategory, event: eventType, transactionType, webhookEventId: eventId },
       },
     })
   })

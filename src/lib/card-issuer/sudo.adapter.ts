@@ -137,11 +137,22 @@ export class SudoCardIssuer implements ICardIssuer {
     return normalize(legacy)
   }
 
-  async fundCard(cardId: string, amountRubbi: string): Promise<void> {
+  async fundCard(cardId: string, amount: string): Promise<void> {
     await this.request("POST", `/cards/${cardId}/fund`, {
-      amount: amountRubbi,
+      amount,
       currency: "USD",
     })
+  }
+
+  /**
+   * TODO(verify): the Sudo Africa endpoint for moving funds off a card is not
+   * documented in this repository and no sandbox is available yet. Until it
+   * is confirmed, unloads under CARD_ISSUER=sudo fail before anything moves.
+   */
+  async defundCard(cardId: string, amount: string): Promise<void> {
+    throw new Error(
+      `Sudo defund is not implemented (card ${cardId}, amount ${amount}); see TODO(verify) in sudo.adapter.ts`,
+    )
   }
 
   async freezeCard(cardId: string): Promise<void> {

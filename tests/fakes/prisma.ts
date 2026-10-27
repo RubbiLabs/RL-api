@@ -219,6 +219,12 @@ export class FakePrisma {
         record("findUnique", args)
         return self.withInclude(model, self.findOne(model, args.where), args)
       },
+      async findUniqueOrThrow(args: Row) {
+        record("findUniqueOrThrow", args)
+        const row = self.findOne(model, args.where)
+        if (!row) throw notFoundError(model)
+        return self.withInclude(model, row, args)
+      },
       async findFirst(args: Row = {}) {
         record("findFirst", args)
         const rows = self.query(model, args)

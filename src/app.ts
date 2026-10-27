@@ -8,13 +8,14 @@ import Fastify, { FastifyInstance } from "fastify"
 import { Worker } from "bullmq"
 
 import { env } from "./config/index.js"
-import { SudoCardIssuer } from "./lib/card-issuer/sudo.adapter.js"
+import { createCardIssuer } from "./lib/card-issuer/factory.js"
 import { closeQueueResources } from "./lib/queue.js"
 import { contractIds, rpcServer } from "./lib/stellar/client.js"
 import { getPlan, getSchedule, getSubscription } from "./lib/stellar/contracts.js"
 import { Indexer } from "./lib/stellar/indexer.js"
 import { registerAuthRoutes } from "./modules/auth/auth.routes.js"
 import { registerCardsRoutes } from "./modules/cards/cards.routes.js"
+import { registerDevRoutes, shouldRegisterDevRoutes } from "./modules/dev/dev.routes.js"
 import { registerDepositsRoutes } from "./modules/deposits/deposits.routes.js"
 import { registerSubscriptionsRoutes } from "./modules/subscriptions/subscriptions.routes.js"
 import { registerTransactionsRoutes } from "./modules/transactions/transactions.routes.js"
@@ -66,11 +67,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     routePrefix: "/docs",
   })
 
-  app.decorate("cardIssuer", new SudoCardIssuer({
-    apiKey: env.SUDO_API_KEY ?? "",
-    baseUrl: env.SUDO_BASE_URL,
-    defaultCustomerId: env.SUDO_DEFAULT_CUSTOMER_ID,
-  }))
+  app.decorate("cardIssuer", createCardIssuer(env))
 
   app.decorate("authenticate", async function authenticate(request, reply) {
     try {
@@ -111,6 +108,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     await registerSubscriptionsRoutes(api)
     await registerSalaryStreamingRoutes(api)
     await registerWebhooksRoutes(api)
+    if (shouldRegisterDevRoutes(env)) {
+      await registerDevRoutes(api)
+    }
   }, { prefix: "/api/v1" })
 
   let workers: Worker[] = []

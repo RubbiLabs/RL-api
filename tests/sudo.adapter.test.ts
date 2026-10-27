@@ -30,7 +30,7 @@ describe("SudoCardIssuer", () => {
 
     await expect(
       issuer.createVirtualCard({
-        holderName: "test",
+        userId: "user-1", holderName: "test",
         currency: "USD",
         type: "virtual",
       }),
@@ -88,19 +88,19 @@ describe("SudoCardIssuer", () => {
       defaultCustomerId: "customer_1",
     })
 
-    const active = await issuer.createVirtualCard({ holderName: "t", currency: "USD", type: "virtual" })
+    const active = await issuer.createVirtualCard({ userId: "user-1", holderName: "t", currency: "USD", type: "virtual" })
     expect(active.status).toBe("ACTIVE")
 
-    const inactive = await issuer.createVirtualCard({ holderName: "t", currency: "USD", type: "virtual" })
+    const inactive = await issuer.createVirtualCard({ userId: "user-1", holderName: "t", currency: "USD", type: "virtual" })
     expect(inactive.status).toBe("FROZEN")
 
-    const frozen = await issuer.createVirtualCard({ holderName: "t", currency: "USD", type: "virtual" })
+    const frozen = await issuer.createVirtualCard({ userId: "user-1", holderName: "t", currency: "USD", type: "virtual" })
     expect(frozen.status).toBe("FROZEN")
 
-    const canceled = await issuer.createVirtualCard({ holderName: "t", currency: "USD", type: "virtual" })
+    const canceled = await issuer.createVirtualCard({ userId: "user-1", holderName: "t", currency: "USD", type: "virtual" })
     expect(canceled.status).toBe("TERMINATED")
 
-    const unknown = await issuer.createVirtualCard({ holderName: "t", currency: "USD", type: "virtual" })
+    const unknown = await issuer.createVirtualCard({ userId: "user-1", holderName: "t", currency: "USD", type: "virtual" })
     expect(unknown.status).toBe("TERMINATED")
 
     globalThis.fetch = originalFetch

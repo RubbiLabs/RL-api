@@ -94,6 +94,7 @@ export async function setUsername(
 
   if (!card) {
     const issued = await app.cardIssuer.createVirtualCard({
+      userId: user.id,
       holderName: username,
       currency: "USD",
       type: "virtual",
