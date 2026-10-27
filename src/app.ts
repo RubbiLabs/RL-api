@@ -26,6 +26,7 @@ import { prismaPlugin } from "./plugins/prisma.js"
 import { redisPlugin } from "./plugins/redis.js"
 import { sensiblePlugin } from "./plugins/sensible.js"
 import { startCardLoadWorker, startCardUnloadWorker } from "./workers/card-movement.worker.js"
+import { scheduleKeeper, startKeeperWorker } from "./workers/keeper.worker.js"
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -141,6 +142,11 @@ export async function buildApp(): Promise<FastifyInstance> {
         startLedger: env.INDEXER_START_LEDGER,
       })
       indexer.start()
+
+      workers.push(startKeeperWorker(app))
+      void scheduleKeeper().catch((error) => {
+        app.log.error({ err: error }, "failed to schedule the keeper")
+      })
     }
   })
 
