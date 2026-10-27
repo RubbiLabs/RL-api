@@ -9,7 +9,7 @@ import { Worker } from "bullmq"
 
 import { env } from "./config/index.js"
 import { createCardIssuer } from "./lib/card-issuer/factory.js"
-import { closeQueueResources } from "./lib/queue.js"
+import { cardLoadQueue, cardUnloadQueue, closeQueueResources } from "./lib/queue.js"
 import { contractIds, rpcServer } from "./lib/stellar/client.js"
 import { getPlan, getSchedule, getSubscription } from "./lib/stellar/contracts.js"
 import { Indexer } from "./lib/stellar/indexer.js"
@@ -25,7 +25,7 @@ import { registerSalaryStreamingRoutes } from "./modules/salary-streaming/salary
 import { prismaPlugin } from "./plugins/prisma.js"
 import { redisPlugin } from "./plugins/redis.js"
 import { sensiblePlugin } from "./plugins/sensible.js"
-import { startTopupWorker } from "./workers/topup.worker.js"
+import { startCardLoadWorker, startCardUnloadWorker } from "./workers/card-movement.worker.js"
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -68,6 +68,15 @@ export async function buildApp(): Promise<FastifyInstance> {
   })
 
   app.decorate("cardIssuer", createCardIssuer(env))
+
+  app.decorate("cardMovements", {
+    enqueueLoad: async (movementId: string) => {
+      await cardLoadQueue.add("card-load", { movementId }, { jobId: movementId })
+    },
+    enqueueUnload: async (movementId: string) => {
+      await cardUnloadQueue.add("card-unload", { movementId }, { jobId: movementId })
+    },
+  })
 
   app.decorate("authenticate", async function authenticate(request, reply) {
     try {
@@ -117,7 +126,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   let indexer: Indexer | null = null
 
   app.addHook("onReady", async () => {
-    workers = [startTopupWorker(app)]
+    workers = [startCardLoadWorker(app), startCardUnloadWorker(app)]
 
     // Background chain work is not started under NODE_ENV=test; the indexer
     // and keeper are exercised directly by their own tests.

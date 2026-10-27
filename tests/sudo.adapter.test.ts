@@ -55,7 +55,7 @@ describe("SudoCardIssuer", () => {
     })
 
     await expect(
-      issuer.fundCard("card-1", "10.00"),
+      issuer.fundCard("card-1", "10.00", "ref-1"),
     ).rejects.toThrow("Sudo API 400")
 
     globalThis.fetch = originalFetch

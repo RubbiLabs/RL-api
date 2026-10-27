@@ -10,6 +10,11 @@ declare module "fastify" {
     prisma: PrismaClient
     redis: Redis
     cardIssuer: ICardIssuer
+    /** Queue producers for card loads and unloads (mockable in tests). */
+    cardMovements: {
+      enqueueLoad: (movementId: string) => Promise<void>
+      enqueueUnload: (movementId: string) => Promise<void>
+    }
     authenticate: (
       request: import("fastify").FastifyRequest,
       reply: import("fastify").FastifyReply,

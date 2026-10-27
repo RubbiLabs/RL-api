@@ -137,10 +137,15 @@ export class SudoCardIssuer implements ICardIssuer {
     return normalize(legacy)
   }
 
-  async fundCard(cardId: string, amount: string): Promise<void> {
+  /**
+   * TODO(verify): whether Sudo's fund endpoint accepts an idempotency key.
+   * `reference` is sent as `reference` in the body until that is confirmed.
+   */
+  async fundCard(cardId: string, amount: string, reference: string): Promise<void> {
     await this.request("POST", `/cards/${cardId}/fund`, {
       amount,
       currency: "USD",
+      reference,
     })
   }
 
@@ -149,9 +154,9 @@ export class SudoCardIssuer implements ICardIssuer {
    * documented in this repository and no sandbox is available yet. Until it
    * is confirmed, unloads under CARD_ISSUER=sudo fail before anything moves.
    */
-  async defundCard(cardId: string, amount: string): Promise<void> {
+  async defundCard(cardId: string, amount: string, reference: string): Promise<void> {
     throw new Error(
-      `Sudo defund is not implemented (card ${cardId}, amount ${amount}); see TODO(verify) in sudo.adapter.ts`,
+      `Sudo defund is not implemented (card ${cardId}, amount ${amount}, reference ${reference}); see TODO(verify) in sudo.adapter.ts`,
     )
   }
 

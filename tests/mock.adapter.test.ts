@@ -35,8 +35,9 @@ describe("MockCardIssuer", () => {
     const issuer = new MockCardIssuer()
     const card = await issuer.createVirtualCard({ userId: "user-a", holderName: "a", currency: "USD", type: "virtual" })
 
-    await issuer.fundCard(card.id, "12.5")
-    await issuer.defundCard(card.id, "2.5")
+    await issuer.fundCard(card.id, "12.5", "ref-1")
+    await issuer.fundCard(card.id, "12.5", "ref-1") // same reference: applied once
+    await issuer.defundCard(card.id, "2.5", "ref-2")
     expect(issuer.balanceOf(card.id)).toBe("10")
 
     await issuer.freezeCard(card.id)

@@ -17,6 +17,10 @@ export class MockCardIssuer implements ICardIssuer {
   readonly name = "MOCK" as const
 
   private readonly cards = new Map<string, { status: IssuerCardStatus; balance: Prisma.Decimal; userHash: string }>()
+  private readonly seenReferences = new Set<string>()
+
+  /** Test hook: make the next `count` fund/defund calls throw. */
+  failNextFunding = 0
 
   /** Issuer card id for a user; stable across restarts. */
   static cardIdFor(userId: string): string {
@@ -55,14 +59,28 @@ export class MockCardIssuer implements ICardIssuer {
     return card
   }
 
-  async fundCard(cardId: string, amount: string): Promise<void> {
-    const card = this.card(cardId)
-    card.balance = card.balance.plus(amount)
+  private applyOnce(reference: string, apply: () => void) {
+    if (this.failNextFunding > 0) {
+      this.failNextFunding--
+      throw new Error("mock issuer: simulated funding failure")
+    }
+    if (this.seenReferences.has(reference)) return
+    this.seenReferences.add(reference)
+    apply()
   }
 
-  async defundCard(cardId: string, amount: string): Promise<void> {
+  async fundCard(cardId: string, amount: string, reference: string): Promise<void> {
     const card = this.card(cardId)
-    card.balance = card.balance.minus(amount)
+    this.applyOnce(`fund:${reference}`, () => {
+      card.balance = card.balance.plus(amount)
+    })
+  }
+
+  async defundCard(cardId: string, amount: string, reference: string): Promise<void> {
+    const card = this.card(cardId)
+    this.applyOnce(`defund:${reference}`, () => {
+      card.balance = card.balance.minus(amount)
+    })
   }
 
   async freezeCard(cardId: string): Promise<void> {

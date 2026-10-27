@@ -201,7 +201,10 @@ export class FakePrisma {
       if (!wanted) continue
       const rel = spec.relations?.[name]
       if (!rel) continue
-      const related = this.tables[rel.model]!.filter((r) => sameValue(r[rel.foreignField], row[rel.localField]))
+      const nested = typeof wanted === "object" ? (wanted as Row) : undefined
+      const related = this.tables[rel.model]!
+        .filter((r) => sameValue(r[rel.foreignField], row[rel.localField]))
+        .map((r) => this.withInclude(rel.model, r, nested))
       out[name] = rel.many ? related : (related[0] ?? null)
     }
     return out

@@ -88,6 +88,7 @@ CREATE TABLE "CardMovement" (
     "status" "CardMoveStatus" NOT NULL DEFAULT 'PENDING',
     "txHash" TEXT,
     "failureReason" TEXT,
+    "compensatesId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "settledAt" TIMESTAMP(3),
