@@ -26,6 +26,7 @@ function toIssuerStatus(status: string): IssuerCardStatus {
 }
 
 export class SudoCardIssuer implements ICardIssuer {
+  readonly name = "SUDO" as const
   private readonly apiKey: string
   private readonly baseUrl: string
   private readonly defaultCustomerId?: string

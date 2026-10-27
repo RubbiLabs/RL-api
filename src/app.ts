@@ -10,6 +10,7 @@ import { Worker } from "bullmq"
 import { env } from "./config/index.js"
 import { SudoCardIssuer } from "./lib/card-issuer/sudo.adapter.js"
 import { closeQueueResources } from "./lib/queue.js"
+import { registerAuthRoutes } from "./modules/auth/auth.routes.js"
 import { registerCardsRoutes } from "./modules/cards/cards.routes.js"
 import { registerDepositsRoutes } from "./modules/deposits/deposits.routes.js"
 import { registerSubscriptionsRoutes } from "./modules/subscriptions/subscriptions.routes.js"
@@ -99,6 +100,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   })
 
   await app.register(async (api) => {
+    await registerAuthRoutes(api)
     await registerUsersRoutes(api)
     await registerCardsRoutes(api)
     await registerDepositsRoutes(api)

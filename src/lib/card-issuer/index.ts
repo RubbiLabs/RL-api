@@ -23,7 +23,11 @@ export interface CardDetails {
   pan?: string
 }
 
+export type CardIssuerName = "MOCK" | "SUDO"
+
 export interface ICardIssuer {
+  /** Stored on each card so the frontend can show a MOCK badge. */
+  readonly name: CardIssuerName
   createVirtualCard(params: CreateCardParams): Promise<CardResult>
   fundCard(cardId: string, amountRubbi: string): Promise<void>
   freezeCard(cardId: string): Promise<void>
