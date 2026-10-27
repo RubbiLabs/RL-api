@@ -10,11 +10,8 @@ import { Worker } from "bullmq"
 import { env } from "./config/index.js"
 import { SudoCardIssuer } from "./lib/card-issuer/sudo.adapter.js"
 import { closeQueueResources } from "./lib/queue.js"
-import { startArbitrumListener } from "./listeners/arbitrum.listener.js"
-import { registerAuthRoutes } from "./modules/auth/auth.routes.js"
 import { registerCardsRoutes } from "./modules/cards/cards.routes.js"
 import { registerDepositsRoutes } from "./modules/deposits/deposits.routes.js"
-import { registerFaucetRoutes } from "./modules/faucet/faucet.routes.js"
 import { registerSubscriptionsRoutes } from "./modules/subscriptions/subscriptions.routes.js"
 import { registerTransactionsRoutes } from "./modules/transactions/transactions.routes.js"
 import { registerUsersRoutes } from "./modules/users/users.routes.js"
@@ -23,11 +20,6 @@ import { registerSalaryStreamingRoutes } from "./modules/salary-streaming/salary
 import { prismaPlugin } from "./plugins/prisma.js"
 import { redisPlugin } from "./plugins/redis.js"
 import { sensiblePlugin } from "./plugins/sensible.js"
-import { startDepositWorker } from "./workers/deposit.worker.js"
-import {
-  scheduleSubscriptionChecks,
-  startSubscriptionWorker,
-} from "./workers/subscription.worker.js"
 import { startTopupWorker } from "./workers/topup.worker.js"
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -107,46 +99,22 @@ export async function buildApp(): Promise<FastifyInstance> {
   })
 
   await app.register(async (api) => {
-    await registerAuthRoutes(api)
     await registerUsersRoutes(api)
     await registerCardsRoutes(api)
     await registerDepositsRoutes(api)
     await registerTransactionsRoutes(api)
     await registerSubscriptionsRoutes(api)
-    await registerFaucetRoutes(api)
     await registerSalaryStreamingRoutes(api)
     await registerWebhooksRoutes(api)
   }, { prefix: "/api/v1" })
 
-  let stopListener: (() => void) | null = null
   let workers: Worker[] = []
 
   app.addHook("onReady", async () => {
-    // Do not block Fastify readiness on external provider startup.
-    // Listener backfill/RPC calls can exceed onReady timeout in hosted environments.
-    workers = [
-      startDepositWorker(app),
-      startTopupWorker(app),
-      startSubscriptionWorker(app),
-    ]
-
-    void (async () => {
-      try {
-        stopListener = await startArbitrumListener(app)
-      } catch (error) {
-        app.log.error({ err: error }, "Arbitrum listener failed during background startup")
-      }
-
-      try {
-        await scheduleSubscriptionChecks()
-      } catch (error) {
-        app.log.error({ err: error }, "Failed to schedule subscription checks")
-      }
-    })()
+    workers = [startTopupWorker(app)]
   })
 
   app.addHook("onClose", async () => {
-    stopListener?.()
     await Promise.all(workers.map((worker) => worker.close()))
     await closeQueueResources()
   })
