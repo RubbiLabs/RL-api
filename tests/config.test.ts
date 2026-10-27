@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { Keypair } from "@stellar/stellar-sdk"
 import { TEST_ENV, ZERO_SEED } from "./helpers.js"
 
 const ENV_BACKUP = { ...process.env }
@@ -107,9 +108,10 @@ describe("environment config validation", () => {
 
   test("rejects the example JWT secret in production", async () => {
     process.env.NODE_ENV = "production"
-    process.env.OPERATOR_SECRET = "SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4"
-    process.env.KEEPER_SECRET = "SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4"
-    process.env.SEP10_SIGNING_SECRET = "SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4"
+    // Real-looking (random, throwaway) seeds so only the JWT placeholder is at fault.
+    process.env.OPERATOR_SECRET = Keypair.random().secret()
+    process.env.KEEPER_SECRET = Keypair.random().secret()
+    process.env.SEP10_SIGNING_SECRET = Keypair.random().secret()
     process.env.JWT_SECRET = "replace-with-at-least-32-char-secret"
     await expect(loadConfig()).rejects.toThrow("JWT_SECRET cannot be the example placeholder")
   })
