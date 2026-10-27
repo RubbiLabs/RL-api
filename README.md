@@ -1,459 +1,196 @@
-# Rubbi API — Frontend Integration Guide
+# Rubbi API — Integration Guide (Stellar)
+
+Backend for Rubbi on Stellar: SEP-10 authentication, an event indexer that mirrors the vault, subscriptions and payroll contracts, card loads and unloads through the vault, and a virtual card from a mock issuer (or Sudo Africa). Part of the Rubbi repos: [RL-smart-contracts](https://github.com/RubbiLabs/RL-smart-contracts) (Soroban contracts) and [RL-frontend](https://github.com/RubbiLabs/RL-frontend).
+
+Design document: [PRD.md](PRD.md). Swagger UI: `GET /docs`.
 
 ## Base URL
 
 ```
-https://rubbi-api.onrender.com/api/v1
+http://localhost:3000/api/v1
 ```
 
-All endpoints return JSON. Swagger UI is available at `GET /docs`.
+All endpoints return JSON. Amounts are USDC as decimal strings with up to 7 decimals (`"12.5"`), never numbers.
 
 ---
 
-## Authentication
+## The wallet-vs-card model
 
-### How to get a token
+Every user has two balances:
 
-1. **User connects wallet** (MetaMask, WalletConnect, etc.) on **Arbitrum**.
-2. **User signs a transaction** calling `Authentication.createAccount(username)` on-chain. This registers their wallet with a username.
-3. **POST /auth/register** — `{ walletAddress, username }` — returns `{ token, user }`. A virtual card is auto-created.
-4. On subsequent visits: **POST /auth/login** — `{ walletAddress }` — returns a fresh `{ token, user }`.
+| Balance | What it is | Who changes it |
+|---|---|---|
+| `walletBalance` | mirror of the user's USDC in the on-chain **vault** | only the indexer, from vault events (`deposit`, `withdraw`, `card_spend_settled`, `refund_credited`) |
+| `cardBalance` | USDC loaded on the virtual card at the issuer | card loads/unloads (after the issuer step) and card spend / refund webhooks |
 
-### How to send the token
+Money is in exactly one place at a time:
 
+1. **Deposit**: the user signs `vault.deposit` from their wallet. The indexer credits `walletBalance`. Nothing happens to the card.
+2. **Load the card** (`POST /cards/load`): the backend's operator moves the amount from the user's vault to Rubbi's treasury on-chain (`settle_card_spend`, idempotent by reference), then funds the card at the issuer and credits `cardBalance`. `walletBalance` goes down when the indexer sees the settlement event.
+3. **Spend**: the issuer's webhook debits `cardBalance`. No chain action.
+4. **Unload the card** (`POST /cards/unload`): the issuer defunds the card, `cardBalance` goes down, then the treasury moves the amount back into the user's vault (`credit_refund`). `walletBalance` goes up when the indexer sees the refund event. Without a treasury key on the API host the unload waits in `PENDING_TREASURY` for an operator (`bun run process-pending-unloads`).
+5. **Withdraw**: the user signs `vault.withdraw`. Only wallet money can be withdrawn; card money is no longer in the vault.
+
+Poll `GET /cards/movements` for the status of loads and unloads (`PENDING → SETTLED → COMPLETED`, or `FAILED` / `PENDING_TREASURY`).
+
+---
+
+## Authentication (SEP-10)
+
+1. `GET /auth/challenge?account=G...` → `{ transaction, network_passphrase }` (a challenge transaction, base64 XDR, signed by the server, valid 5 minutes).
+2. Sign `transaction` with the user's wallet (Stellar Wallets Kit `signTransaction`, network passphrase as returned).
+3. `POST /auth/token { transaction }` → `{ token, user }`.
+4. Send `Authorization: Bearer <token>` on protected routes. `sub` of the JWT is the Stellar account id, verbatim (addresses are case-sensitive).
+
+```ts
+const { transaction, network_passphrase } = await api.get(`/auth/challenge?account=${address}`)
+const { signedTxXdr } = await kit.signTransaction(transaction, { networkPassphrase: network_passphrase, address })
+const { token } = await api.post("/auth/token", { transaction: signedTxXdr })
 ```
-Authorization: Bearer <jwt>
-```
 
-Invalid/expired tokens return **401**.
+Limits: only the account's master key is accepted (multisig accounts and contract accounts / passkey wallets are backlog items: Horizon signer lookup, SEP-45). Contract ids (`C...`) are rejected with 400.
 
-### JWT payload
-
-```json
-{ "sub": "0xabc...", "iat": 123, "exp": 456 }
-```
-
-`sub` is the lowercased wallet address.
+Onboarding: after the token, `GET /users/me` returns `username: null` and `card: null`; `POST /users/username { username }` (3–32 chars, `[a-z0-9_]`, once per address) sets it and creates the card. Mock cards have `issuer: "MOCK"`; show the badge.
 
 ---
 
 ## Error format
 
-All errors use the standard Fastify shape:
-
 ```json
 { "statusCode": 400, "error": "Bad Request", "message": "..." }
 ```
 
-| Code | Meaning              | Common causes                                  |
-|------|----------------------|------------------------------------------------|
-| 400  | Bad Request          | Invalid input, on-chain verification failed    |
-| 401  | Unauthorized         | Missing/expired JWT, invalid webhook HMAC      |
-| 404  | Not Found            | User/card/deposit not found                    |
-| 409  | Conflict             | Username doesn't match on-chain profile        |
-| 429  | Too Many Requests    | Rate limit (120/min, 600/min for webhooks)     |
-
----
-
-## Rate limiting
-
-- Default: **120 requests/minute** per IP
-- Webhooks: **600 requests/minute**
+| Code | Meaning | Common causes |
+|---|---|---|
+| 400 | Bad Request | invalid input, amount above the available balance, SEP-45 account |
+| 401 | Unauthorized | missing or expired JWT, rejected challenge, invalid webhook HMAC |
+| 404 | Not Found | user / card / deposit / plan / schedule not found |
+| 409 | Conflict | username already set or taken, card not active |
+| 429 | Too Many Requests | 120/min per IP; auth routes 30/min; webhooks 600/min |
 
 ---
 
 ## Endpoints
 
-### GET /health
+### System and configuration
 
-No auth. Returns:
+| Method | Path | Auth | Returns |
+|---|---|---|---|
+| GET | `/health` | — | `{ status, service, timestamp }` |
+| GET | `/stellar/config` | — | `{ network, networkPassphrase, rpcUrl, usdcSacId, contracts: { vault, subscriptions, payroll }, sep10 }` — use this instead of hard-coding ids |
 
-```json
-{ "status": "ok", "service": "rubbi-api", "timestamp": "2026-01-01T00:00:00.000Z" }
-```
+### Auth and users
 
----
+| Method | Path | Auth | Body / Returns |
+|---|---|---|---|
+| GET | `/auth/challenge?account=G...` | — | `{ transaction, network_passphrase }` |
+| POST | `/auth/token` | — | `{ transaction }` → `{ token, user: { id, stellarAddress, username } }` |
+| GET | `/users/me` | JWT | `{ id, stellarAddress, username, walletBalance, cardBalance, card }` |
+| POST | `/users/username` | JWT | `{ username }` → same shape as `/users/me` |
 
-### POST /auth/register
+### Cards
 
-No auth. Register a wallet that has already called `Authentication.createAccount()` on-chain.
+| Method | Path | Auth | Body / Returns |
+|---|---|---|---|
+| GET | `/cards/me` | JWT | `{ id, issuer, issuerId, last4, expiryMonth, expiryYear, status, cardBalance, walletBalance }` |
+| POST | `/cards/freeze` / `/cards/unfreeze` | JWT | `{ reason? }` → `{ status }` |
+| GET | `/cards/me/number` | JWT | `{ cardId, issuer, pan, last4, ... }` — `pan` is always `null` for MOCK |
+| POST | `/cards/load` | JWT | `{ amount }` → 202 + movement. 400 when above `walletBalance` minus loads in flight |
+| POST | `/cards/unload` | JWT | `{ amount }` → 202 + movement. 400 when above `cardBalance` minus unloads in flight |
+| GET | `/cards/movements` | JWT | `[{ id, direction, amount, status, reference, txHash, failureReason, createdAt, settledAt, completedAt }]` |
 
-**Body:**
+### Ledgers
 
-```json
-{ "walletAddress": "0x...", "username": "alice_123" }
-```
+| Method | Path | Auth | Returns |
+|---|---|---|---|
+| GET | `/deposits` | JWT | vault deposits: `[{ id, txHash, eventId, amountRaw, amount, status, ledger, confirmedAt, createdAt }]` |
+| GET | `/deposits/:txHash` | JWT | one deposit (64-hex Stellar tx hash) |
+| GET | `/transactions?page=&pageSize=&account=WALLET|CARD` | JWT | `{ page, pageSize, total, items: [{ id, type, account, amount, balanceAfter, description, metadata, createdAt }] }`. `amount` is the signed delta on `account`; rows with `metadata.informational` (subscription charges, payroll) did not change a balance |
 
-`username` must match the name used in the on-chain `createAccount()` call (3–32 alphanumeric chars + underscores).
+### Subscriptions (read-only mirror)
 
-**Response 201:**
+| Method | Path | Auth | Returns |
+|---|---|---|---|
+| GET | `/subscriptions/plans?includeInactive=` | — | `[{ id, merchant, name, amount, period, active }]` |
+| GET | `/subscriptions/plans/:planId` | — | one plan |
+| GET | `/subscriptions/me` | JWT | `[{ id, onChainSubId, subscriber, planId, status, nextDueAt, lastChargedAt, createdAt, plan }]` |
 
-```json
-{
-  "token": "eyJhbGciOiJIUzI1NiIs...",
-  "user": {
-    "id": "uuid",
-    "walletAddress": "0x...",
-    "username": "alice_123",
-    "rubbiBalance": "0"
-  }
-}
-```
+Subscribe, pause, resume and cancel are **wallet-signed contract calls** (`subscribe`, `pause_subscription`, `resume_subscription`, `cancel_subscription`). Before `subscribe`, approve the USDC SAC for `plan.amount × N` periods with an expiration ledger covering them. The mirror updates when the indexer sees the event (a few seconds).
 
-A virtual card is automatically created — no separate endpoint needed.
+### Payroll (read-only mirror)
 
----
+| Method | Path | Auth | Returns |
+|---|---|---|---|
+| GET | `/payroll/schedules` | JWT | schedules where the caller is the employer |
+| GET | `/payroll/schedules/incoming` | JWT | schedules that pay the caller |
+| GET | `/payroll/schedules/:scheduleId` | JWT | one schedule (employer or recipient only) |
 
-### POST /auth/login
+Schedule shape: `{ id, onChainId, employer, recipient, amount, period, label, status, nextDueAt, lastDisbursedAt, createdAt }`. Fund, withdraw escrow, create, pause, resume, cancel and the manual "Pay due now" (`disburse`) are wallet-signed; escrow is read on-chain with `escrow_of`.
 
-No auth. Log in an existing user.
+### Dashboard
 
-**Body:** `{ "walletAddress": "0x..." }`
+`GET /dashboard/stats` (JWT) → `{ walletBalance, cardBalance, activeSubscriptions, pastDueSubscriptions, activeSchedules, incomingSchedules, recentTransactions }`.
 
-**Response 200:** Same shape as register.
+### Webhooks and development
 
----
-
-### GET /users/me
-
-Auth required. Returns the current user profile.
-
-```json
-{
-  "id": "uuid",
-  "walletAddress": "0x...",
-  "username": "alice_123",
-  "rubbiBalance": "42.5",
-  "card": {
-    "id": "uuid",
-    "issuerId": "sudo-card-id",
-    "last4": "1234",
-    "expiryMonth": "12",
-    "expiryYear": "29",
-    "status": "ACTIVE"
-  }
-}
-```
-
-`card` is `null` if no card exists (shouldn't happen with auto-creation).
-
----
-
-### GET /cards/me
-
-Auth required. Card summary.
-
-```json
-{
-  "id": "uuid",
-  "issuerId": "sudo-card-id",
-  "last4": "1234",
-  "expiryMonth": "12",
-  "expiryYear": "29",
-  "status": "ACTIVE",
-  "rubbiBalance": "42.5"
-}
-```
-
-### POST /cards/freeze
-
-Auth required. Freeze the card.
-
-**Body:** `{ "reason": "Lost card" }` (optional, 1–140 chars)
-
-**Response:** `{ "status": "frozen" }`
-
-### POST /cards/unfreeze
-
-Auth required. Unfreeze the card.
-
-**Body:** `{ "reason": "Found it" }` (optional, 1–140 chars)
-
-**Response:** `{ "status": "active" }`
-
-### GET /cards/me/number
-
-Auth required. Reveals the full PAN (PCI-sensitive — use sparingly).
-
-```json
-{
-  "cardId": "uuid",
-  "pan": "4111111111111111",
-  "last4": "1111",
-  "expiryMonth": "12",
-  "expiryYear": "29",
-  "status": "ACTIVE"
-}
-```
-
----
-
-### GET /deposits
-
-Auth required. List deposits (most recent ~100).
-
-```json
-[
-  {
-    "id": "uuid",
-    "txHash": "0x...",
-    "amountRaw": "1000000000000000000",
-    "amountRubbi": "1.0",
-    "status": "CONFIRMED",
-    "blockNumber": 123456,
-    "confirmedAt": "2026-01-01T00:00:00.000Z",
-    "createdAt": "2026-01-01T00:00:00.000Z"
-  }
-]
-```
-
-### GET /deposits/:txHash
-
-Auth required. Get a specific deposit by transaction hash.
-
-**Params:** `txHash` — hex string (`0x` + 64 hex chars)
-
----
-
-### GET /transactions
-
-Auth required. Paginated ledger.
-
-**Query:** `?page=1&pageSize=20` (pageSize max 100, defaults to 20)
-
-```json
-{
-  "page": 1,
-  "pageSize": 20,
-  "total": 5,
-  "items": [
-    {
-      "id": "uuid",
-      "type": "DEPOSIT",
-      "amountRubbi": "10.0",
-      "balanceAfter": "50.0",
-      "description": "Deposit confirmed",
-      "metadata": { "txHash": "0x..." },
-      "createdAt": "2026-01-01T00:00:00.000Z"
-    }
-  ]
-}
-```
-
-**Transaction types:** `DEPOSIT`, `SPEND`, `REFUND`, `SUBSCRIPTION_PAYMENT`, `FAUCET`
-
----
-
-### GET /subscriptions/plans
-
-Auth required. All active subscription plans from the contract.
-
-```json
-[
-  { "planId": 1, "name": "Premium", "feeRubbi": "10.0", "active": true }
-]
-```
-
-### GET /subscriptions/me
-
-Auth required. User's active subscriptions from the contract.
-
-```json
-[
-  { "active": true, "planName": "Premium", "feeRubbi": "10.0", "userAddress": "0x...", "planId": 1 }
-]
-```
-
-### POST /subscriptions/start
-
-Auth required. Confirm a user-signed `SubscriptionService.startSubscription(planId, email, pw)` transaction.
-
-**Body:** `{ "planId": 1, "txHash": "0x..." }`
-
-**Response 201:** `{ "txHash": "0x...", "verified": true }`
-
-### POST /subscriptions/:planId/pause
-
-Auth required. Confirm a user-signed `pauseSubscription(planId)` tx.
-
-**Params:** `planId`, **Body:** `{ "txHash": "0x..." }`
-
-**Response:** `{ "txHash": "0x...", "planId": 1, "verified": true }`
-
-### POST /subscriptions/:planId/resume
-
-Auth required. Confirm a user-signed `resumeSubscription(planId)` tx.
-
-**Params:** `planId`, **Body:** `{ "txHash": "0x..." }`
-
-**Response:** `{ "txHash": "0x...", "planId": 1, "verified": true }`
-
-> **Pattern:** User signs the tx in their wallet → frontend posts the txHash → backend verifies on-chain receipt. The API never submits transactions.
-
----
-
-### POST /faucet/claim
-
-Auth required. Confirm a user-signed `RubbiToken.claimFaucet()` tx.
-
-**Body:** `{ "txHash": "0x..." }`
-
-**Response 201:** `{ "txHash": "0x...", "verified": true }`
-
-### GET /faucet/cooldown
-
-Auth required. Time remaining before next claim.
-
-```json
-{ "walletAddress": "0x...", "cooldownSeconds": 84321 }
-```
-
----
-
-### GET /salary-streaming/streams
-
-Auth required. All daily and monthly salary streams.
-
-```json
-{
-  "daily": [ /* StreamShape */ ],
-  "monthly": [ /* StreamShape */ ]
-}
-```
-
-### GET /salary-streaming/streams/:streamId
-
-Auth required. Single stream.
-
-**StreamShape:**
-
-```json
-{
-  "id": "string",
-  "recipient": "0x...",
-  "amount": "1000000000000000000",
-  "lastPayment": "0",
-  "startTime": "1700000000",
-  "intervalType": 0,
-  "active": true,
-  "name": "Monthly salary",
-  "streamOwner": "0x..."
-}
-```
-
-### GET /salary-streaming/fees
-
-Auth required. Current contract streaming fees.
-
-```json
-{ "fees": "500000000000000000" }
-```
-
-### POST /salary-streaming/streams
-
-Auth required. Confirm `SalaryStreaming.createStream(details, intervalType)` tx.
-
-**Body:** `{ "txHash": "0x..." }`
-
-**Response 201:** `{ "txHash": "0x...", "streamId": "1", "verified": true }`
-
-### POST /salary-streaming/streams/:streamId/pause
-
-Auth required. Confirm `pauseDailyStream(streamId)` or `pauseMonthlyStream(streamId)`.
-
-**Body:** `{ "txHash": "0x..." }`
-
-**Response:** `{ "txHash": "0x...", "streamId": 1, "verified": true }`
-
-### POST /salary-streaming/streams/:streamId/resume
-
-Auth required. Same pattern for resume.
-
-### POST /salary-streaming/disburse
-
-Auth required. Confirm `disburseDaily()` or `disburseMonthly()`.
-
-**Body:** `{ "txHash": "0x..." }`
-
-**Response 201:** `{ "txHash": "0x...", "verified": true }`
-
----
-
-### POST /webhooks/card-issuer
-
-No auth (HMAC). Sudo Africa card issuer webhook.
-
-**Headers:** `x-sudo-signature` or `x-signature` — HMAC SHA-256 hex
-
-**Supported events:**
-
-- `authorization.request` — balance check (returns `"00"` approve or `"51"` decline)
-- `card.charge` / `transaction.created` — deducts balance, records SPEND ledger entry
-- `refund` / `reversal` — ignored
-
-**Response:**
-
-```json
-// Authorization approved
-{ "statusCode": 200, "data": { "responseCode": "00" }, "ok": true }
-
-// Insufficient funds
-{ "statusCode": 200, "data": { "responseCode": "51" } }
-
-// Spend processed
-{ "ok": true }
-
-// Ignored event
-{ "ok": true, "ignored": true, "reason": "Unsupported event type: refund" }
-
-// Duplicate (within 24h)
-{ "ok": true, "duplicate": true }
-```
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| POST | `/webhooks/card-issuer` | HMAC (`x-sudo-signature`) | issuer events: authorization requests answered from `cardBalance`; purchases debit it; refunds credit it |
+| POST | `/dev/mock-card-spend` | — | `{ userId, amount, merchantName?, merchantCategory? }` → runs a signed purchase webhook through the real handler. Registered only when `NODE_ENV !== production` and `CARD_ISSUER=mock` |
 
 ---
 
 ## Integration patterns
 
-### The "user signs first" pattern
+**Wallet-signed, mirror-confirmed.** Every contract write (deposit, withdraw, subscribe, payroll) is built, simulated and signed in the frontend and submitted to Soroban RPC. The backend learns about it through events; poll the relevant read endpoint until the mirror reflects it. Nothing has to be "confirmed" with the API.
 
-Endpoints for **subscriptions, salary streaming, and faucet** follow this flow:
+**Backend-signed, polled.** Card loads and unloads are the only flows where the backend signs on-chain (operator / treasury). They are asynchronous: `POST` returns 202 with a movement; poll `GET /cards/movements`.
 
-1. Frontend calls the contract method via the user's wallet (e.g., `SubscriptionService.startSubscription(planId, email, pw)`)
-2. Wallet returns a `txHash`
-3. Frontend sends the `txHash` to the API
-4. API verifies the transaction receipt on-chain and returns `{ verified: true }`
+**Testnet funds.** XLM from Friendbot (`stellar keys fund` or Stellar Lab), USDC from Circle's testnet faucet; the account needs a USDC trustline (`changeTrust`) before it can hold USDC.
 
-### The "on-chain event" pattern
+---
 
-**Deposits** are fully on-chain driven:
+## Local development
 
-1. User sends RUBBI to `ModalContract.deposit(amount)`
-2. The Arbitrum listener detects `DepositSuccessful`
-3. A worker credits the user's balance, records the transaction, and funds their virtual card
-4. Frontend polls `GET /deposits` or `GET /transactions` to show the update
+```bash
+cp .env.example .env            # contract ids for testnet are already filled in
+POSTGRES_PORT=5435 REDIS_PORT=6380 docker compose -f docker-compose.dev.yml up -d db redis
+bun install
+bunx prisma generate
+bunx prisma migrate deploy
+bun run dev
+```
 
-### Smart contracts
+Adjust `DATABASE_URL` / `REDIS_URL` in `.env` to the ports you chose. See [README.docker.dev.md](README.docker.dev.md).
 
-| Contract | Env variable |
+Checks: `bun run typecheck`, `bun test` (set `TEST_DATABASE_URL` to also run the Postgres-backed suites). CI runs both with Postgres and Redis service containers.
+
+Secrets: the `.env.example` seeds are the all-zero placeholder, valid for development and rejected in production. Real operator, keeper and SEP-10 keys belong in the deployment's secret store; the treasury key is optional and best kept off the API host (`TREASURY_SECRET=S... bun run process-pending-unloads`).
+
+---
+
+## Contracts and roles
+
+| Item | Testnet value |
 |---|---|
-| RubbiToken | `RUBBI_TOKEN_ADDRESS` |
-| ModalContract | `MODAL_CONTRACT_ADDRESS` |
-| Authentication | `AUTH_CONTRACT_ADDRESS` |
-| SubscriptionService | `SUBSCRIPTION_CONTRACT_ADDRESS` |
-| SalaryStreaming | `SALARY_STREAMING_ADDRESS` |
+| vault | `CBGARSQ7BY4345DNX76LWT4VXEHRRFJMNW46SCX7DRHBILL5V6RJN6KR` |
+| subscriptions | `CDWMLKAUMXHLSBOKKCK5A4ECUP2VIIHXAL7MVQ5TEFLE3QUXZRMDC3PC` |
+| payroll | `CB76PQ2MTILAQJAHLMTRHYDODX7H73YUCTVVKYO46ME3MK6WUTELDGYU` |
+| USDC SAC | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
+| operator (signs `settle_card_spend`) | `GASCJCM7CLBWKKJ7UKXISRX67YRQD2EVL57YKPRCCTTECEZQYRJEPNXN` |
+| treasury (signs `credit_refund`) | `GDRCO5PHUXNGQSM5CB752AWDCYID2VCCCUNF2QVA3GAWV7UB6QMEB4T5` |
+| keeper (signs `charge_batch` / `disburse_batch`) | `GAL5BE6C7TTJXOZ2OIZXDTJX6K56ZOBUGEFOF3GE2OQUXACSA34N3WSQ` |
 
-All deployed on **Arbitrum** (chain ID `42161` or `421614` for Sepolia testnet).
+Contract error codes are mirrored in `src/lib/stellar/errors.ts`; the authoritative tables are in the contracts README.
 
 ---
 
 ## DB models (for reference)
 
-**User:** id (UUID), walletAddress (unique), username, rubbiBalance (Decimal), card (1:1), deposits, transactions, subscriptions
-
-**Card:** id (UUID), userId (unique FK), issuerId (Sudo ID), last4, expiryMonth, expiryYear, status (ACTIVE|FROZEN|TERMINATED)
-
-**Deposit:** id (UUID), userId (FK), txHash (unique), amountRaw, amountRubbi, status (PENDING|CONFIRMED|FAILED), blockNumber
-
-**Transaction:** id (UUID), userId (FK), type (DEPOSIT|SPEND|REFUND|SUBSCRIPTION_PAYMENT|FAUCET), amountRubbi, balanceAfter, description, metadata (JSON)
-
-**Subscription:** id (UUID), userId (FK), onChainPlanId, planName, feeRubbi, status (ACTIVE|PAUSED|CANCELLED). Unique on `[userId, onChainPlanId]`.
+**User:** id, stellarAddress (unique), username (unique, once), walletBalance, cardBalance, card (1:1)
+**Card:** id, userId, issuer (MOCK|SUDO), issuerId, last4, expiryMonth, expiryYear, status
+**Deposit:** id, userId, txHash, eventId (unique), amountRaw (stroops), amount, status, ledger
+**Transaction:** id, userId, type, account (WALLET|CARD), amount (signed), balanceAfter, description, metadata
+**CardMovement:** id, userId, direction (LOAD|UNLOAD), amount, reference (unique), status, txHash, failureReason, compensatesId
+**SubscriptionPlan / Subscription / PayrollSchedule:** mirrors of the contracts (see PRD.md §7)
+**ChainCursor / ProcessedEvent / ChainGap:** indexer state
