@@ -2,6 +2,8 @@
 
 [Rubbi](https://github.com/RubbiLabs) is a payment automation platform for users in Nigeria: a USDC balance on Stellar (the Rubbi wallet), a virtual card loaded from it, recurring subscriptions paid from the user's own wallet, and recurring payroll from an employer escrow. This repository is the backend (Bun, Fastify, Prisma, PostgreSQL, Redis, BullMQ): SEP-10 sign-in, an event indexer that mirrors the vault, subscriptions and payroll contracts into Postgres, the keeper that runs due charges and payroll, card loading and unloading through the vault, and the card issuer adapter (a mock issuer today, Sudo Africa behind `CARD_ISSUER=sudo`). It runs on Stellar testnet.
 
+**Try it:** web app <https://rubbilabs.vercel.app> (Stellar testnet), API <https://rubbi-api.onrender.com> (Render free tier; the first request may take up to a minute). Test funds: XLM from [Friendbot](https://lab.stellar.org/account/fund), testnet USDC from [Circle's faucet](https://faucet.circle.com).
+
 ## How the Rubbi repositories fit together
 
 Rubbi is three repositories under the [RubbiLabs](https://github.com/RubbiLabs) organisation. Nothing moves money except a transaction signed by the user's own wallet or by one of the backend's narrowly scoped keys.
