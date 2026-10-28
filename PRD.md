@@ -38,7 +38,7 @@ The contract functions keep their deployed names: `settle_card_spend` means "mov
 
 ## 2. Deployed smart contracts
 
-Source: `RL-smart-contracts` (branch `stellar-migration`), record `deployments/testnet.json`, commit `2136695`.
+Source: `RL-smart-contracts` (branch `main`), record `deployments/testnet.json`, commit `2136695`.
 
 | Contract | Testnet id | Purpose |
 |---|---|---|
@@ -247,7 +247,7 @@ UNLOAD  PENDING ──defund card, cardBalance −──▶ SETTLED ──credit
 
 - `reference = sha256(movement id)` is the vault's idempotency key. The contract returns `DuplicateReference` for a replay, which the workers treat as "already done". A reference is never reused: the column is unique and spend and refund references are separate namespaces on-chain.
 - `walletBalance` is **never** changed by the workers; the indexer changes it when `card_spend_settled` / `refund_credited` arrive. `cardBalance` changes with the issuer step, in the same database transaction as the `CARD_LOAD` / `CARD_UNLOAD` row.
-- Issuer calls carry the reference so a retried call is applied once (`MockCardIssuer` enforces it; the Sudo behaviour is `TODO(verify)`).
+- Issuer calls carry the reference so a retried call is applied once (`MockCardIssuer` enforces it; the Sudo behaviour is not yet verified).
 - `POST /cards/load` rejects amounts above `walletBalance` minus loads in flight; `POST /cards/unload` rejects amounts above `cardBalance` minus unloads in flight. The chain remains the final authority: an on-chain `InsufficientBalance` marks the load `FAILED`.
 - Jobs retry 6 times with exponential backoff. When a load's issuer funding fails after the settlement, `compensateFailedLoad` marks it `FAILED` and creates an `UNLOAD` with `compensatesId` that goes straight to `credit_refund`.
 - Without `TREASURY_SECRET`, unloads stop at `PENDING_TREASURY`. An operator holding the treasury key runs `TREASURY_SECRET=S... bun run scripts/process-pending-unloads.ts` (`--dry-run` lists them) from a machine of their own; the API's `.env` never holds that key.
@@ -299,7 +299,7 @@ Swagger UI: `GET /docs`.
 `ICardIssuer { name, createVirtualCard, fundCard(cardId, amount, reference), defundCard(cardId, amount, reference), freezeCard, unfreezeCard, getCardDetails }`.
 
 - **`MockCardIssuer`** (`CARD_ISSUER=mock`, default): card id and last4 derived from a hash of the user id; no PAN or CVV exist; fund/defund idempotent by reference; balances in memory only. Every card is stored with `issuer = "MOCK"` so the frontend shows a MOCK badge.
-- **`SudoCardIssuer`** (`CARD_ISSUER=sudo`): unchanged HTTP adapter. `defundCard` is `TODO(verify)` (the endpoint is not documented here) and throws until confirmed, so unloads fail before anything moves; whether `fundCard` accepts an idempotency key is also `TODO(verify)`.
+- **`SudoCardIssuer`** (`CARD_ISSUER=sudo`): unchanged HTTP adapter. `defundCard` is not yet verified (the endpoint is not documented here) and throws until confirmed, so unloads fail before anything moves; whether `fundCard` accepts an idempotency key is also not yet verified.
 
 ---
 
