@@ -1,6 +1,6 @@
 # Deploying the Rubbi API to Render (testnet)
 
-This guide walks through deploying `RL-api` from the `deploy/testnet` branch to
+This guide walks through deploying `RL-api` from the `develop` branch to
 [Render](https://render.com) with the Blueprint in [`render.yaml`](render.yaml):
 one Docker web service (`rubbi-api`), one Render Postgres (`rubbi-db`) and one
 Render Key Value instance (`rubbi-redis`, Valkey, Redis-compatible), all on the
@@ -41,8 +41,9 @@ You need:
 
 - A Render account with a workspace that has no other free Postgres or free
   Key Value instance (one of each per workspace).
-- Push access to `RubbiLabs/RL-api`, with the `deploy/testnet` branch pushed
-  (pushing is the maintainers' action; nothing in this guide is automated).
+- Push access to `RubbiLabs/RL-api`, with this work merged into `develop`
+  (merging and pushing are the maintainers' actions; nothing in this guide is
+  automated).
 - The `stellar` CLI (28.1.0) with the testnet identities `rubbi-operator`,
   `rubbi-keeper` and `rubbi-treasury` in its keystore (the ones used by
   `RL-smart-contracts/scripts/deploy-testnet.sh`). Check they match the
@@ -61,8 +62,9 @@ You need:
 ## Step 1 — Create the Blueprint
 
 1. Render dashboard → **New +** → **Blueprint**.
-2. Connect the `RubbiLabs/RL-api` repository and select branch
-   **`deploy/testnet`** (the Blueprint file is read from that branch).
+2. Connect the `RubbiLabs/RL-api` repository and select branch **`develop`**
+   (the Blueprint file is read from that branch, and the web service deploys
+   from it).
 3. Render shows the three resources from `render.yaml` and a form with every
    `sync: false` variable. Fill them in as described in Step 2, then
    **Apply**.
@@ -247,8 +249,8 @@ upgrade the plan.
 
 ## Updating
 
-Pushing to `deploy/testnet` redeploys automatically (`autoDeployTrigger:
-commit`). A deploy builds the image, runs the migrations in the entrypoint and
+Every commit merged into `develop` redeploys automatically
+(`autoDeployTrigger: commit`). A deploy builds the image, runs the migrations in the entrypoint and
 switches traffic once `/health` is green; if the health check does not pass
 within 15 minutes Render cancels the deploy and keeps the previous version.
 

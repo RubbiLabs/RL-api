@@ -29,7 +29,8 @@ services:
     runtime: docker
     plan: free
     region: frankfurt
-    branch: deploy/testnet
+    # Deploys from develop, the branch this work is merged into.
+    branch: develop
     dockerfilePath: ./Dockerfile
     dockerContext: .
     # The Dockerfile ENTRYPOINT runs `prisma migrate deploy` and then the server
