@@ -126,14 +126,14 @@ describe("environment config validation", () => {
     await expect(loadConfig()).rejects.toThrow("CARD_ISSUER")
   })
 
-  test("parses CORS_ORIGINS into exact origins and defaults to localhost:3000", async () => {
+  test("parses CORS_ORIGINS into exact origins and defaults to localhost:3001", async () => {
     process.env.CORS_ORIGINS = " http://localhost:3001/ , https://app.rubbi.test/some/path,http://localhost:3001"
     const { env } = await loadConfig()
     expect(env.CORS_ORIGINS).toEqual(["http://localhost:3001", "https://app.rubbi.test"])
 
     delete process.env.CORS_ORIGINS
     const { env: defaults } = await loadConfig()
-    expect(defaults.CORS_ORIGINS).toEqual(["http://localhost:3000"])
+    expect(defaults.CORS_ORIGINS).toEqual(["http://localhost:3001"])
   })
 
   test("rejects CORS_ORIGINS entries that are not http(s) URLs or wildcards", async () => {

@@ -180,13 +180,13 @@ describe("buildApp", () => {
       method: "OPTIONS",
       url: "/api/v1/cards/load",
       headers: {
-        origin: "http://localhost:3000",
+        origin: "http://localhost:3001",
         "access-control-request-method": "POST",
         "access-control-request-headers": "authorization,content-type",
       },
     })
     expect(preflight.statusCode).toBe(204)
-    expect(preflight.headers["access-control-allow-origin"]).toBe("http://localhost:3000")
+    expect(preflight.headers["access-control-allow-origin"]).toBe("http://localhost:3001")
     expect(preflight.headers["access-control-allow-methods"]).toBe("GET, POST, PATCH, DELETE")
     expect(preflight.headers["access-control-allow-headers"]).toBe("Authorization, Content-Type")
     expect(preflight.headers["access-control-allow-credentials"]).toBeUndefined()

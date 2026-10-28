@@ -28,7 +28,7 @@ const optionalString = () => z.preprocess(blankToUndefined, z.string().min(1).op
  */
 const corsOrigins = z
   .string()
-  .default("http://localhost:3000")
+  .default("http://localhost:3001")
   .transform((value, ctx) => {
     const origins: string[] = []
     for (const raw of value.split(",")) {
