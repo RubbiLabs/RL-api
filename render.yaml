@@ -1,0 +1,113 @@
+# Render Blueprint for the Rubbi API (testnet).
+# Reference: https://render.com/docs/blueprint-spec (checked 2026-10-28).
+#
+# One Docker web service + one Render Postgres + one Render Key Value (Valkey,
+# Redis-compatible) instance, all on the free plan and in the same region so
+# the datastores are reachable over Render's private network.
+#
+# Free-plan limits that matter here (https://render.com/docs/free, 2026-10-28):
+# - Web service: spins down after 15 min without inbound HTTP traffic and takes
+#   about a minute to wake; 750 free instance hours per workspace per month;
+#   single instance; ephemeral filesystem. While asleep the indexer and the
+#   keeper do not run (see DEPLOY.md, "Keeping the service awake").
+# - Postgres: one free instance per workspace, 1 GB, no backups, EXPIRES 30 DAYS
+#   after creation (then 14 days grace before deletion). Upgrade or recreate
+#   before day 30.
+# - Key Value: one free instance per workspace, in-memory only (data lost on
+#   restart), persistence off, 25 MB / 50 connections.
+#
+# Secrets are never written here: every `sync: false` variable is entered in
+# the Render dashboard when the Blueprint is applied (DEPLOY.md explains how to
+# obtain each one). Variables with code defaults that need no change on testnet
+# (STELLAR_NETWORK_PASSPHRASE, INDEXER_POLL_INTERVAL_MS, INDEXER_START_LEDGER,
+# KEEPER_CRON, KEEPER_HOLD_SECONDS, JWT_EXPIRES_IN, SUDO_API_KEY, SUDO_BASE_URL,
+# SUDO_DEFAULT_CUSTOMER_ID) are left out and can be added in the dashboard.
+
+services:
+  - type: web
+    name: rubbi-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: deploy/testnet
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # The Dockerfile ENTRYPOINT runs `prisma migrate deploy` and then the server
+    # (the pre-deploy command is only available on paid instances).
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Render injects PORT=10000 for every web service; src/server.ts binds to it.
+
+      # Datastores (private-network connection strings).
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rubbi-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: rubbi-redis
+          type: keyvalue
+          property: connectionString
+
+      # Public Stellar configuration. Contract ids are the testnet deployment
+      # recorded in RL-smart-contracts/deployments/testnet.json (commit 2136695,
+      # deployed 2026-10-27).
+      - key: STELLAR_NETWORK
+        value: testnet
+      - key: STELLAR_RPC_URL
+        value: https://soroban-testnet.stellar.org
+      - key: USDC_SAC_ID
+        value: CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA
+      - key: VAULT_CONTRACT_ID
+        value: CBGARSQ7BY4345DNX76LWT4VXEHRRFJMNW46SCX7DRHBILL5V6RJN6KR
+      - key: SUBSCRIPTIONS_CONTRACT_ID
+        value: CDWMLKAUMXHLSBOKKCK5A4ECUP2VIIHXAL7MVQ5TEFLE3QUXZRMDC3PC
+      - key: PAYROLL_CONTRACT_ID
+        value: CB76PQ2MTILAQJAHLMTRHYDODX7H73YUCTVVKYO46ME3MK6WUTELDGYU
+
+      # Card issuer and browser origins.
+      - key: CARD_ISSUER
+        value: mock
+      - key: CORS_ORIGINS
+        value: https://rubbilabs.vercel.app
+
+      # Secrets and deployment-specific values: entered in the dashboard, never
+      # in this file. See DEPLOY.md for where each one comes from.
+      - key: OPERATOR_SECRET
+        sync: false
+      - key: KEEPER_SECRET
+        sync: false
+      - key: TREASURY_SECRET
+        sync: false
+      - key: SEP10_SIGNING_SECRET
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: SUDO_WEBHOOK_SECRET
+        sync: false
+      # SEP-10 domains: the service's onrender.com host, e.g. rubbi-api.onrender.com
+      - key: HOME_DOMAIN
+        sync: false
+      - key: WEB_AUTH_DOMAIN
+        sync: false
+
+  - type: keyvalue
+    name: rubbi-redis
+    plan: free
+    region: frankfurt
+    # Internal access only: no external IP may connect.
+    ipAllowList: []
+    # BullMQ job queue: never evict keys (Render's recommendation for queues).
+    maxmemoryPolicy: noeviction
+
+databases:
+  - name: rubbi-db
+    plan: free
+    region: frankfurt
+    databaseName: rubbi
+    user: rubbi
+    # Render's current default; Prisma ORM 6 supports PostgreSQL 9.6 through 18.
+    postgresMajorVersion: "18"
