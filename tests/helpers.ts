@@ -30,6 +30,7 @@ export const TEST_ENV = {
   SUDO_WEBHOOK_SECRET: "test-webhook-secret",
   JWT_SECRET: "test-jwt-secret-test-jwt-secret-1234",
   JWT_EXPIRES_IN: "24h",
+  CORS_ORIGINS: "http://localhost:3000,https://app.rubbi.test",
 } as const
 
 export const USER_ADDRESS = "GCW4BXKRNKDICUSCI3RVP3MYTPQWMZ7ABCGAF5CZIWZ22U6TBIRDYE6G"

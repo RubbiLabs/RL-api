@@ -1,5 +1,6 @@
 import "./types/index.js"
 
+import fastifyCors from "@fastify/cors"
 import fastifyJwt from "@fastify/jwt"
 import fastifyRateLimit from "@fastify/rate-limit"
 import fastifySwagger from "@fastify/swagger"
@@ -45,6 +46,15 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(sensiblePlugin)
   await app.register(prismaPlugin)
   await app.register(redisPlugin)
+
+  // Exact origins from CORS_ORIGINS; no wildcard and no credentials (the JWT
+  // travels in the Authorization header, not in a cookie).
+  await app.register(fastifyCors, {
+    origin: env.CORS_ORIGINS,
+    methods: ["GET", "POST", "PATCH", "DELETE"],
+    allowedHeaders: ["Authorization", "Content-Type"],
+    credentials: false,
+  })
 
   await app.register(fastifyJwt, {
     secret: env.JWT_SECRET,

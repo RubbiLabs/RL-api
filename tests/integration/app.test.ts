@@ -164,6 +164,51 @@ describe("buildApp", () => {
     await app.close()
   })
 
+  test("CORS: an allowed origin gets the headers, a disallowed one does not", async () => {
+    const app = await build()
+
+    const allowed = await app.inject({
+      method: "GET",
+      url: "/api/v1/stellar/config",
+      headers: { origin: "https://app.rubbi.test" },
+    })
+    expect(allowed.statusCode).toBe(200)
+    expect(allowed.headers["access-control-allow-origin"]).toBe("https://app.rubbi.test")
+    expect(allowed.headers["access-control-allow-credentials"]).toBeUndefined()
+
+    const preflight = await app.inject({
+      method: "OPTIONS",
+      url: "/api/v1/cards/load",
+      headers: {
+        origin: "http://localhost:3000",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "authorization,content-type",
+      },
+    })
+    expect(preflight.statusCode).toBe(204)
+    expect(preflight.headers["access-control-allow-origin"]).toBe("http://localhost:3000")
+    expect(preflight.headers["access-control-allow-methods"]).toBe("GET, POST, PATCH, DELETE")
+    expect(preflight.headers["access-control-allow-headers"]).toBe("Authorization, Content-Type")
+    expect(preflight.headers["access-control-allow-credentials"]).toBeUndefined()
+
+    const denied = await app.inject({
+      method: "GET",
+      url: "/api/v1/stellar/config",
+      headers: { origin: "https://evil.example" },
+    })
+    expect(denied.statusCode).toBe(200)
+    expect(denied.headers["access-control-allow-origin"]).toBeUndefined()
+    expect(denied.headers["access-control-allow-methods"]).toBeUndefined()
+
+    const deniedPreflight = await app.inject({
+      method: "OPTIONS",
+      url: "/api/v1/cards/load",
+      headers: { origin: "https://evil.example", "access-control-request-method": "POST" },
+    })
+    expect(deniedPreflight.headers["access-control-allow-origin"]).toBeUndefined()
+    await app.close()
+  })
+
   test("the public plans endpoint needs no JWT", async () => {
     const app = await build()
     const response = await app.inject({ method: "GET", url: "/api/v1/subscriptions/plans" })

@@ -161,7 +161,7 @@ bunx prisma migrate deploy
 bun run dev
 ```
 
-Adjust `DATABASE_URL` / `REDIS_URL` in `.env` to the ports you chose. See [README.docker.dev.md](README.docker.dev.md).
+Adjust `DATABASE_URL` / `REDIS_URL` in `.env` to the ports you chose, and put the frontend's origin in `CORS_ORIGINS` (exact origins, comma-separated; the JWT goes in the `Authorization` header, so no cookies or credentials are involved). See [README.docker.dev.md](README.docker.dev.md).
 
 Checks: `bun run typecheck`, `bun test` (set `TEST_DATABASE_URL` to also run the Postgres-backed suites). CI runs both with Postgres and Redis service containers.
 

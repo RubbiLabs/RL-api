@@ -16,6 +16,7 @@
     "prisma:deploy": "prisma migrate deploy"
   },
   "dependencies": {
+    "@fastify/cors": "11.3.1",
     "@fastify/jwt": "^9.1.0",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/sensible": "^6.0.3",

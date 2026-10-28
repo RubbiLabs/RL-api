@@ -22,6 +22,38 @@ const blankToUndefined = (value: unknown) =>
 
 const optionalString = () => z.preprocess(blankToUndefined, z.string().min(1).optional())
 
+/**
+ * Comma-separated list of browser origins allowed by CORS. Each entry must be
+ * an absolute URL; only its origin (scheme, host, port) is kept. No wildcard.
+ */
+const corsOrigins = z
+  .string()
+  .default("http://localhost:3000")
+  .transform((value, ctx) => {
+    const origins: string[] = []
+    for (const raw of value.split(",")) {
+      const entry = raw.trim()
+      if (!entry) continue
+      let url: URL
+      try {
+        url = new URL(entry)
+      } catch {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `"${entry}" is not a valid URL` })
+        return z.NEVER
+      }
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `"${entry}" must be an http(s) URL` })
+        return z.NEVER
+      }
+      if (!origins.includes(url.origin)) origins.push(url.origin)
+    }
+    if (origins.length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "at least one origin is required" })
+      return z.NEVER
+    }
+    return origins
+  })
+
 const contractId = z
   .string()
   .refine((value) => StrKey.isValidContract(value), {
@@ -74,6 +106,9 @@ const envSchema = z
 
     JWT_SECRET: z.string().min(32),
     JWT_EXPIRES_IN: z.string().default("24h"),
+
+    // Browser origins allowed to call the API (the frontend). Exact origins only.
+    CORS_ORIGINS: corsOrigins,
   })
   .superRefine((value, ctx) => {
     if (value.CARD_ISSUER === "sudo") {
