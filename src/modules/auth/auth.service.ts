@@ -1,146 +1,101 @@
-import { Prisma } from "@prisma/client"
+import { Keypair, WebAuth } from "@stellar/stellar-sdk"
 import { FastifyInstance } from "fastify"
-import { Hex, hexToString, stringToHex } from "viem"
 
-import { AuthenticationABI } from "../../lib/arbitrum/abis/Authentication.abi.js"
-import { contractAddresses, publicClient } from "../../lib/arbitrum/client.js"
-import { LoginBody, RegisterBody } from "./auth.schema.js"
+import { env } from "../../config/index.js"
 
-function normalizeWalletAddress(walletAddress: string) {
-  return walletAddress.toLowerCase()
+/** Seconds a challenge stays valid. SEP-10 recommends 5 to 15 minutes. */
+export const CHALLENGE_TIMEOUT_SECONDS = 300
+
+let serverKeypair: Keypair | null = null
+
+/** The SEP-10 server signing key. Derived once from SEP10_SIGNING_SECRET. */
+export function getServerKeypair(): Keypair {
+  if (!serverKeypair) {
+    serverKeypair = Keypair.fromSecret(env.SEP10_SIGNING_SECRET)
+  }
+  return serverKeypair
 }
 
-export async function registerUser(app: FastifyInstance, input: RegisterBody) {
-  const walletAddress = normalizeWalletAddress(input.walletAddress)
-  const username = input.username.trim().toLowerCase()
+/**
+ * SEP-10 step 1: build a challenge transaction for `account`.
+ *
+ * The transaction has sequence number 0 (it can never be submitted), is
+ * signed by the server, carries the home domain in a manage-data operation
+ * and expires after CHALLENGE_TIMEOUT_SECONDS.
+ */
+export function buildChallenge(account: string) {
+  const transaction = WebAuth.buildChallengeTx(
+    getServerKeypair(),
+    account,
+    env.HOME_DOMAIN,
+    CHALLENGE_TIMEOUT_SECONDS,
+    env.STELLAR_NETWORK_PASSPHRASE,
+    env.WEB_AUTH_DOMAIN,
+  )
 
-  let onChain: unknown
+  return {
+    transaction,
+    network_passphrase: env.STELLAR_NETWORK_PASSPHRASE,
+  }
+}
+
+/**
+ * SEP-10 step 2: verify a challenge the client signed and issue a JWT.
+ *
+ * Checks, in the SDK's `readChallengeTx` / `verifyChallengeTxSigners`:
+ * the server signature, sequence number 0, time bounds, home domain, web
+ * auth domain, and that the client account's master key signed.
+ *
+ * Only the master key is accepted. Accounts whose master key weight is zero
+ * or that use multisig need a Horizon signer lookup
+ * (`verifyChallengeTxThreshold`); contract accounts need SEP-45. Both are
+ * backlog items.
+ */
+export async function verifyChallengeAndIssueToken(
+  app: FastifyInstance,
+  transaction: string,
+) {
+  const serverPublicKey = getServerKeypair().publicKey()
+  let clientAccountId: string
+
   try {
-    onChain = await publicClient.readContract({
-      address: contractAddresses.auth,
-      abi: AuthenticationABI,
-      functionName: "getUserInfo",
-      args: [walletAddress as Hex],
-    })
-  } catch {
-    throw app.httpErrors.badRequest(
-      "Wallet is not registered on-chain. Call Authentication.createAccount from the user wallet first.",
+    const details = WebAuth.readChallengeTx(
+      transaction,
+      serverPublicKey,
+      env.STELLAR_NETWORK_PASSPHRASE,
+      env.HOME_DOMAIN,
+      env.WEB_AUTH_DOMAIN,
     )
-  }
+    clientAccountId = details.clientAccountID
 
-  const maybeAddress = (onChain as { address_?: string }).address_
-  if (!maybeAddress || maybeAddress === "0x0000000000000000000000000000000000000000") {
-    throw app.httpErrors.badRequest(
-      "Wallet is not registered on-chain. Call Authentication.createAccount from the user wallet first.",
+    WebAuth.verifyChallengeTxSigners(
+      transaction,
+      serverPublicKey,
+      env.STELLAR_NETWORK_PASSPHRASE,
+      [clientAccountId],
+      env.HOME_DOMAIN,
+      env.WEB_AUTH_DOMAIN,
     )
-  }
-
-  const onChainNameRaw = (onChain as { name?: Hex }).name
-  const onChainUsername = onChainNameRaw
-    ? hexToString(onChainNameRaw).toLowerCase()
-    : null
-
-  if (!onChainUsername || onChainUsername !== username) {
-    throw app.httpErrors.conflict("Provided username does not match on-chain profile")
-  }
-
-  const usernameExists = await publicClient.readContract({
-    address: contractAddresses.auth,
-    abi: AuthenticationABI,
-    functionName: "usernameExist",
-    args: [stringToHex(username)],
-  })
-
-  if (!usernameExists) {
-    throw app.httpErrors.badRequest("Username is not registered on-chain for this wallet")
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "invalid challenge"
+    throw app.httpErrors.unauthorized(`SEP-10 challenge rejected: ${message}`)
   }
 
   const user = await app.prisma.user.upsert({
-    where: { walletAddress },
-    update: { username },
-    create: {
-      walletAddress,
-      username,
-      rubbiBalance: new Prisma.Decimal(0),
-    },
-    include: { card: true },
+    where: { stellarAddress: clientAccountId },
+    update: {},
+    create: { stellarAddress: clientAccountId },
+    select: { id: true, stellarAddress: true, username: true },
   })
 
-  if (!user.card) {
-    const card = await app.cardIssuer.createVirtualCard({
-      holderName: username,
-      currency: "USD",
-      type: "virtual",
-    })
-
-    await app.prisma.card.create({
-      data: {
-        userId: user.id,
-        issuerId: card.id,
-        last4: card.last4,
-        expiryMonth: card.expiryMonth,
-        expiryYear: card.expiryYear,
-        status: card.status,
-      },
-    })
-  }
-
-  const token = app.jwt.sign({ sub: walletAddress })
+  const token = app.jwt.sign({ sub: user.stellarAddress })
 
   return {
     token,
     user: {
       id: user.id,
-      walletAddress: user.walletAddress,
+      stellarAddress: user.stellarAddress,
       username: user.username,
-      rubbiBalance: user.rubbiBalance.toString(),
-    },
-  }
-}
-
-export async function loginUser(app: FastifyInstance, input: LoginBody) {
-  const walletAddress = normalizeWalletAddress(input.walletAddress)
-
-  let onChain: unknown
-  try {
-    onChain = await publicClient.readContract({
-      address: contractAddresses.auth,
-      abi: AuthenticationABI,
-      functionName: "getUserInfo",
-      args: [walletAddress as Hex],
-    })
-  } catch {
-    throw app.httpErrors.notFound("No on-chain account found for this wallet")
-  }
-
-  const maybeAddress = (onChain as { address_?: string }).address_
-
-  if (!maybeAddress || maybeAddress === "0x0000000000000000000000000000000000000000") {
-    throw app.httpErrors.notFound("No on-chain account found for this wallet")
-  }
-
-  const rawName = (onChain as { name?: Hex }).name
-  const username = rawName ? hexToString(rawName).toLowerCase() : null
-
-  const user = await app.prisma.user.upsert({
-    where: { walletAddress },
-    update: { username: username ?? undefined },
-    create: {
-      walletAddress,
-      username: username ?? undefined,
-      rubbiBalance: new Prisma.Decimal(0),
-    },
-  })
-
-  const token = app.jwt.sign({ sub: walletAddress })
-
-  return {
-    token,
-    user: {
-      id: user.id,
-      walletAddress: user.walletAddress,
-      username: user.username,
-      rubbiBalance: user.rubbiBalance.toString(),
     },
   }
 }

@@ -5,48 +5,52 @@ import { buildAuthController } from "./auth.controller.js"
 export async function registerAuthRoutes(app: FastifyInstance) {
   const controller = buildAuthController(app)
 
-  app.post("/auth/register", {
+  app.get("/auth/challenge", {
+    config: {
+      rateLimit: { max: 30, timeWindow: "1 minute" },
+    },
     schema: {
       tags: ["auth"],
-      description: "Register wallet on-chain and create local user/card",
-      body: {
+      summary: "SEP-10 challenge",
+      description:
+        "Returns a SEP-10 challenge transaction (base64 XDR) for the given Stellar account. " +
+        "Sign it with the account's key and POST it to /auth/token. Contract accounts (C...) " +
+        "need SEP-45, which is not implemented yet.",
+      querystring: {
         type: "object",
-        required: ["walletAddress", "username"],
+        required: ["account"],
         properties: {
-          walletAddress: { type: "string", pattern: "^0x[a-fA-F0-9]{40}$" },
-          username: { type: "string", minLength: 3, maxLength: 32, pattern: "^[a-zA-Z0-9_]+$" },
+          account: { type: "string", description: "Stellar account id (G...)" },
         },
       },
       response: {
-        201: {
+        200: {
           type: "object",
           properties: {
-            token: { type: "string" },
-            user: {
-              type: "object",
-              properties: {
-                id: { type: "string" },
-                walletAddress: { type: "string" },
-                username: { type: "string" },
-                rubbiBalance: { type: "string" },
-              },
-            },
+            transaction: { type: "string" },
+            network_passphrase: { type: "string" },
           },
         },
       },
     },
-    handler: controller.register,
+    handler: controller.challenge,
   })
 
-  app.post("/auth/login", {
+  app.post("/auth/token", {
+    config: {
+      rateLimit: { max: 30, timeWindow: "1 minute" },
+    },
     schema: {
       tags: ["auth"],
-      description: "Login with wallet by checking on-chain registration",
+      summary: "SEP-10 token",
+      description:
+        "Verifies the signed challenge (server signature, time bounds, home domain, web auth " +
+        "domain, client signature) and returns a JWT whose `sub` is the Stellar account id.",
       body: {
         type: "object",
-        required: ["walletAddress"],
+        required: ["transaction"],
         properties: {
-          walletAddress: { type: "string", pattern: "^0x[a-fA-F0-9]{40}$" },
+          transaction: { type: "string", description: "Signed challenge, base64 XDR" },
         },
       },
       response: {
@@ -58,15 +62,14 @@ export async function registerAuthRoutes(app: FastifyInstance) {
               type: "object",
               properties: {
                 id: { type: "string" },
-                walletAddress: { type: "string" },
+                stellarAddress: { type: "string" },
                 username: { type: "string", nullable: true },
-                rubbiBalance: { type: "string" },
               },
             },
           },
         },
       },
     },
-    handler: controller.login,
+    handler: controller.token,
   })
 }

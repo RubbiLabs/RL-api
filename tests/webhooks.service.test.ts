@@ -1,284 +1,136 @@
-import { Prisma, TransactionType } from "@prisma/client"
 import { beforeAll, describe, expect, test } from "bun:test"
+import { Prisma } from "@prisma/client"
 import { createHmac } from "node:crypto"
-import { FastifyInstance } from "fastify"
 
-const REQUIRED_ENV = {
-  NODE_ENV: "test",
-  PORT: "3000",
-  DATABASE_URL: "postgresql://user:password@localhost:5432/rubbi",
-  REDIS_URL: "redis://localhost:6379",
-  ARBITRUM_RPC_URL: "https://arb1.arbitrum.io/rpc",
-  ARBITRUM_CHAIN_ID: "42161",
-  RUBBI_TOKEN_ADDRESS: "0x0000000000000000000000000000000000000001",
-  MODAL_CONTRACT_ADDRESS: "0x0000000000000000000000000000000000000002",
-  AUTH_CONTRACT_ADDRESS: "0x0000000000000000000000000000000000000003",
-  SUBSCRIPTION_CONTRACT_ADDRESS: "0x0000000000000000000000000000000000000004",
-  SALARY_STREAMING_ADDRESS: "0x0000000000000000000000000000000000000005",
-  BACKEND_WALLET_PRIVATE_KEY:
-    "0x0000000000000000000000000000000000000000000000000000000000000001",
-  SUDO_API_KEY: "test-key",
-  SUDO_BASE_URL: "https://api.sudo.africa",
-  SUDO_DEFAULT_CUSTOMER_ID: "customer_test_123",
-  SUDO_WEBHOOK_SECRET: "test-webhook-secret",
-  JWT_SECRET: "test-jwt-secret-test-jwt-secret-1234",
-  JWT_EXPIRES_IN: "24h",
-} as const
+import { makeFakePrisma } from "./fakes/prisma.js"
+import { TEST_ENV, USER_ADDRESS, makeHttpErrors, makeRedis, seedEnv } from "./helpers.js"
 
-type HandleCardIssuerWebhook = (
-  app: FastifyInstance,
-  body: {
-    _id?: string
-    type?: string
-    event?: string
-    data?: {
-      _id?: string
-      cardId?: string
-      amount?: string | number
-      merchantName?: string
-      merchantCategory?: string
-      object?: {
-        _id?: string
-        card?: string | { _id?: string }
-        amount?: string | number
-        merchant?: {
-          name?: string
-          category?: string
-        }
-        transactionMetadata?: {
-          type?: string
-        }
-      }
-    }
-  },
-  signature: string | undefined,
-  rawBody: string,
-) => Promise<Record<string, unknown>>
+beforeAll(seedEnv)
 
-let handleCardIssuerWebhook: HandleCardIssuerWebhook
-
-beforeAll(async () => {
-  Object.assign(process.env, REQUIRED_ENV)
-
-  ;({ handleCardIssuerWebhook } = await import(
-    "../src/modules/webhooks/webhooks.service.ts"
-  ))
-})
-
-function makeSignature(payload: object) {
-  return createHmac("sha256", REQUIRED_ENV.SUDO_WEBHOOK_SECRET)
-    .update(JSON.stringify(payload))
-    .digest("hex")
+function sign(payload: object) {
+  return createHmac("sha256", TEST_ENV.SUDO_WEBHOOK_SECRET).update(JSON.stringify(payload)).digest("hex")
 }
 
-function makeHttpErrors() {
+function makeApp(cardBalance: string, redisSet: string | null = "OK") {
+  const prisma = makeFakePrisma()
+  prisma.seed("user", [
+    { id: "u1", stellarAddress: USER_ADDRESS, cardBalance: new Prisma.Decimal(cardBalance), walletBalance: new Prisma.Decimal("99") },
+  ])
+  prisma.seed("card", [{ id: "card-1", userId: "u1", issuer: "MOCK", issuerId: "issuer-card-1", last4: "1234", expiryMonth: "12", expiryYear: "30" }])
   return {
-    unauthorized(message: string) {
-      const error = new Error(message)
-      ;(error as Error & { statusCode: number }).statusCode = 401
-      return error
-    },
-    badRequest(message: string) {
-      const error = new Error(message)
-      ;(error as Error & { statusCode: number }).statusCode = 400
-      return error
-    },
-    notFound(message: string) {
-      const error = new Error(message)
-      ;(error as Error & { statusCode: number }).statusCode = 404
-      return error
-    },
+    prisma,
+    app: { prisma, redis: makeRedis(redisSet), httpErrors: makeHttpErrors() } as any,
   }
 }
 
+const spend = (amount: string | number, extra: Record<string, unknown> = {}) => ({
+  _id: "evt-1",
+  type: "card.charge",
+  data: { cardId: "issuer-card-1", amount, merchantName: "Jumia", merchantCategory: "retail", ...extra },
+})
+
 describe("handleCardIssuerWebhook", () => {
-  test("rejects invalid signature", async () => {
-    const app = {
-      httpErrors: makeHttpErrors(),
-      prisma: {
-        card: { findUnique: async () => null },
-      },
-    } as unknown as FastifyInstance
-
-    await expect(
-      handleCardIssuerWebhook(
-        app,
-        {
-          event: "card.charge",
-          data: { cardId: "card_1", amount: "12.00" },
-        },
-        "wrong-signature",
-        JSON.stringify({
-          event: "card.charge",
-          data: { cardId: "card_1", amount: "12.00" },
-        }),
-      ),
-    ).rejects.toThrow("Invalid webhook signature")
+  test("rejects an invalid signature", async () => {
+    const { handleCardIssuerWebhook } = await import("../src/modules/webhooks/webhooks.service.js")
+    const { app } = makeApp("50")
+    const body = spend("10")
+    await expect(handleCardIssuerWebhook(app, body, "deadbeef", JSON.stringify(body))).rejects.toMatchObject({ statusCode: 401 })
+    await expect(handleCardIssuerWebhook(app, body, undefined, JSON.stringify(body))).rejects.toMatchObject({ statusCode: 401 })
   })
 
-  test("rejects charges that exceed RUBBI balance", async () => {
-    const payload = {
-      event: "card.charge",
-      data: {
-        cardId: "issuer-card-1",
-        amount: "50.00",
-        merchantName: "Netflix",
-      },
-    }
+  test("debits cardBalance only and records a CARD ledger row", async () => {
+    const { handleCardIssuerWebhook } = await import("../src/modules/webhooks/webhooks.service.js")
+    const { app, prisma } = makeApp("50")
+    const body = spend("12.5")
 
-    const app = {
-      httpErrors: makeHttpErrors(),
-      prisma: {
-        card: {
-          findUnique: async () => ({
-            id: "card-db-id",
-            issuerId: "issuer-card-1",
-            user: {
-              id: "user-1",
-              rubbiBalance: new Prisma.Decimal("10.00"),
-            },
-          }),
-        },
-      },
-    } as unknown as FastifyInstance
-
-    await expect(
-      handleCardIssuerWebhook(
-        app,
-        payload,
-        makeSignature(payload),
-        JSON.stringify(payload),
-      ),
-    ).rejects.toThrow("Insufficient RUBBI balance")
-  })
-
-  test("processes valid spend and records ledger mutation", async () => {
-    const payload = {
-      event: "card.charge",
-      data: {
-        cardId: "issuer-card-2",
-        amount: "15.25",
-        merchantName: "DSTV",
-        merchantCategory: "streaming",
-      },
-    }
-
-    const txCalls: { created: boolean; updated: boolean; data?: unknown } = {
-      created: false,
-      updated: false,
-    }
-
-    const app = {
-      httpErrors: makeHttpErrors(),
-      prisma: {
-        card: {
-          findUnique: async () => ({
-            id: "card-db-id-2",
-            issuerId: "issuer-card-2",
-            user: {
-              id: "user-2",
-              rubbiBalance: new Prisma.Decimal("100.00"),
-            },
-          }),
-        },
-        $transaction: async (callback: (tx: any) => Promise<void>) => {
-          await callback({
-            user: {
-              update: async () => {
-                txCalls.updated = true
-                return { rubbiBalance: new Prisma.Decimal("84.75") }
-              },
-            },
-            transaction: {
-              create: async (input: { data: unknown }) => {
-                txCalls.created = true
-                txCalls.data = input.data
-              },
-            },
-          })
-        },
-      },
-    } as unknown as FastifyInstance
-
-    const result = await handleCardIssuerWebhook(
-      app,
-      payload,
-      makeSignature(payload),
-      JSON.stringify(payload),
-    )
+    const result = await handleCardIssuerWebhook(app, body, sign(body), JSON.stringify(body))
 
     expect(result).toEqual({ ok: true })
-    expect(txCalls.updated).toBeTrue()
-    expect(txCalls.created).toBeTrue()
-    expect(txCalls.data).toMatchObject({
-      userId: "user-2",
-      type: TransactionType.SPEND,
-      description: "DSTV charge",
+    const user = prisma.rows("user")[0]!
+    expect(user.cardBalance.toFixed()).toBe("37.5")
+    expect(user.walletBalance.toFixed()).toBe("99")
+    const row = prisma.rows("transaction")[0]!
+    expect(row).toMatchObject({ type: "SPEND", account: "CARD", userId: "u1" })
+    expect(row.amount.toFixed()).toBe("-12.5")
+    expect(row.balanceAfter.toFixed()).toBe("37.5")
+    expect(row.metadata.webhookEventId).toBe("evt-1")
+  })
+
+  test("rejects a spend above cardBalance even when walletBalance would cover it", async () => {
+    const { handleCardIssuerWebhook } = await import("../src/modules/webhooks/webhooks.service.js")
+    const { app, prisma } = makeApp("5")
+    const body = spend("12.5")
+    await expect(handleCardIssuerWebhook(app, body, sign(body), JSON.stringify(body))).rejects.toMatchObject({
+      statusCode: 400,
+      message: "Insufficient card balance",
+    })
+    expect(prisma.rows("transaction")).toHaveLength(0)
+  })
+
+  test("authorization.request answers from cardBalance", async () => {
+    const { handleCardIssuerWebhook } = await import("../src/modules/webhooks/webhooks.service.js")
+    const { app } = makeApp("5")
+    const ok = { ...spend("5"), type: "authorization.request" }
+    expect(await handleCardIssuerWebhook(app, ok, sign(ok), JSON.stringify(ok))).toEqual({ statusCode: 200, data: { responseCode: "00" } })
+    const declined = { ...spend("5.01"), type: "authorization.request" }
+    expect(await handleCardIssuerWebhook(app, declined, sign(declined), JSON.stringify(declined))).toEqual({
+      statusCode: 200,
+      data: { responseCode: "51" },
     })
   })
 
-  test("processes Sudo transaction.created payload shape", async () => {
-    const payload = {
+  test("a merchant refund credits cardBalance only", async () => {
+    const { handleCardIssuerWebhook } = await import("../src/modules/webhooks/webhooks.service.js")
+    const { app, prisma } = makeApp("5")
+    const body = {
+      _id: "evt-r",
+      type: "transaction.created",
+      data: { object: { _id: "evt-r", card: "issuer-card-1", amount: "3", type: "refund", merchant: { name: "Jumia" } } },
+    }
+    const result = await handleCardIssuerWebhook(app, body, sign(body), JSON.stringify(body))
+    expect(result).toEqual({ ok: true, credited: true })
+    const user = prisma.rows("user")[0]!
+    expect(user.cardBalance.toFixed()).toBe("8")
+    expect(user.walletBalance.toFixed()).toBe("99")
+    expect(prisma.rows("transaction")[0]).toMatchObject({ type: "REFUND", account: "CARD" })
+  })
+
+  test("duplicate webhook event ids are ignored", async () => {
+    const { handleCardIssuerWebhook } = await import("../src/modules/webhooks/webhooks.service.js")
+    const { app, prisma } = makeApp("50", null)
+    const body = spend("1")
+    expect(await handleCardIssuerWebhook(app, body, sign(body), JSON.stringify(body))).toEqual({ ok: true, duplicate: true })
+    expect(prisma.rows("transaction")).toHaveLength(0)
+  })
+
+  test("processes the Sudo transaction.created payload shape", async () => {
+    const { handleCardIssuerWebhook } = await import("../src/modules/webhooks/webhooks.service.js")
+    const { app, prisma } = makeApp("50")
+    const body = {
+      _id: "sudo-1",
       type: "transaction.created",
       data: {
-        _id: "webhook-data-1",
         object: {
-          _id: "txn_1",
-          card: "issuer-card-3",
-          amount: -7.5,
-          merchant: {
-            name: "Canva",
-            category: "software",
-          },
-          transactionMetadata: {
-            type: "purchase",
-          },
+          _id: "txn-9",
+          card: { _id: "issuer-card-1" },
+          amount: -20,
+          type: "purchase",
+          merchant: { name: "Shoprite", category: "grocery" },
+          transactionMetadata: { type: "purchase" },
         },
       },
     }
+    expect(await handleCardIssuerWebhook(app, body, sign(body), JSON.stringify(body))).toEqual({ ok: true })
+    expect(prisma.rows("user")[0]!.cardBalance.toFixed()).toBe("30")
+    expect(prisma.rows("transaction")[0]).toMatchObject({ description: "Shoprite charge" })
+  })
 
-    const txCalls: { updated: boolean } = { updated: false }
-
-    const app = {
-      httpErrors: makeHttpErrors(),
-      redis: {
-        set: async () => "OK",
-      },
-      prisma: {
-        card: {
-          findUnique: async () => ({
-            id: "card-db-id-3",
-            issuerId: "issuer-card-3",
-            user: {
-              id: "user-3",
-              rubbiBalance: new Prisma.Decimal("100.00"),
-            },
-          }),
-        },
-        $transaction: async (callback: (tx: any) => Promise<void>) => {
-          await callback({
-            user: {
-              update: async () => {
-                txCalls.updated = true
-                return { rubbiBalance: new Prisma.Decimal("92.50") }
-              },
-            },
-            transaction: {
-              create: async () => undefined,
-            },
-          })
-        },
-      },
-    } as unknown as FastifyInstance
-
-    const result = await handleCardIssuerWebhook(
-      app,
-      payload,
-      makeSignature(payload),
-      JSON.stringify(payload),
-    )
-
-    expect(result).toMatchObject({ ok: true })
-    expect(txCalls.updated).toBeTrue()
+  test("ignores unsupported events and non-positive amounts", async () => {
+    const { handleCardIssuerWebhook } = await import("../src/modules/webhooks/webhooks.service.js")
+    const { app } = makeApp("50")
+    const other = { ...spend("1"), type: "card.created" }
+    expect(await handleCardIssuerWebhook(app, other, sign(other), JSON.stringify(other))).toMatchObject({ ignored: true })
+    const zero = spend("0")
+    expect(await handleCardIssuerWebhook(app, zero, sign(zero), JSON.stringify(zero))).toMatchObject({ ignored: true })
   })
 })

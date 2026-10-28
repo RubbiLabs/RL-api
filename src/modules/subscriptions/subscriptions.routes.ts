@@ -2,143 +2,68 @@ import { FastifyInstance } from "fastify"
 
 import { buildSubscriptionsController } from "./subscriptions.controller.js"
 
+const planSchema = {
+  type: "object",
+  properties: {
+    id: { type: "number" },
+    merchant: { type: "string" },
+    name: { type: "string" },
+    amount: { type: "string", description: "USDC per period" },
+    period: { type: "number", description: "seconds" },
+    active: { type: "boolean" },
+  },
+} as const
+
+const subscriptionSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    onChainSubId: { type: "string" },
+    subscriber: { type: "string" },
+    planId: { type: "number" },
+    status: { type: "string", enum: ["ACTIVE", "PAUSED", "PAST_DUE", "CANCELLED"] },
+    nextDueAt: { type: "string", format: "date-time" },
+    lastChargedAt: { type: "string", format: "date-time", nullable: true },
+    createdAt: { type: "string", format: "date-time" },
+    plan: { ...planSchema, nullable: true },
+  },
+} as const
+
 export async function registerSubscriptionsRoutes(app: FastifyInstance) {
   const controller = buildSubscriptionsController(app)
 
   app.get("/subscriptions/plans", {
-    onRequest: app.authenticate,
     schema: {
       tags: ["subscriptions"],
-      description: "List active plans from chain",
-      response: {
-        200: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              planId: { type: "number" },
-              name: { type: "string" },
-              feeRubbi: { type: "string" },
-              active: { type: "boolean" },
-            },
-          },
-        },
+      description:
+        "Plans mirrored from the subscriptions contract (public). Subscribe by approving the USDC SAC " +
+        "for amount x N periods and calling `subscribe` from the wallet; the mirror updates on the event.",
+      querystring: {
+        type: "object",
+        properties: { includeInactive: { type: "boolean", default: false } },
       },
+      response: { 200: { type: "array", items: planSchema } },
     },
     handler: controller.plans,
+  })
+
+  app.get("/subscriptions/plans/:planId", {
+    schema: {
+      tags: ["subscriptions"],
+      description: "One plan by on-chain id (public)",
+      params: { type: "object", properties: { planId: { type: "number" } }, required: ["planId"] },
+      response: { 200: planSchema },
+    },
+    handler: controller.plan,
   })
 
   app.get("/subscriptions/me", {
     onRequest: app.authenticate,
     schema: {
       tags: ["subscriptions"],
-      description: "List user subscriptions from chain",
-      response: {
-        200: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              active: { type: "boolean" },
-              planName: { type: "string" },
-              feeRubbi: { type: "string" },
-              userAddress: { type: "string" },
-              planId: { type: "number" },
-            },
-          },
-        },
-      },
+      description: "The caller's subscriptions from the mirror, newest first",
+      response: { 200: { type: "array", items: subscriptionSchema } },
     },
     handler: controller.me,
-  })
-
-  app.post("/subscriptions/start", {
-    onRequest: app.authenticate,
-    schema: {
-      tags: ["subscriptions"],
-      description: "Confirm a wallet-signed start subscription transaction",
-      body: {
-        type: "object",
-        required: ["planId", "txHash"],
-        properties: {
-          planId: { type: "number" },
-          txHash: { type: "string", pattern: "^0x[a-fA-F0-9]{64}$" },
-        },
-      },
-      response: {
-        201: {
-          type: "object",
-          properties: {
-            txHash: { type: "string" },
-            verified: { type: "boolean" },
-          },
-        },
-      },
-    },
-    handler: controller.start,
-  })
-
-  app.post("/subscriptions/:planId/pause", {
-    onRequest: app.authenticate,
-    schema: {
-      tags: ["subscriptions"],
-      description: "Confirm a wallet-signed pause subscription transaction",
-      params: {
-        type: "object",
-        properties: {
-          planId: { type: "number" },
-        },
-        required: ["planId"],
-      },
-      body: {
-        type: "object",
-        required: ["txHash"],
-        properties: {
-          txHash: { type: "string", pattern: "^0x[a-fA-F0-9]{64}$" },
-        },
-      },
-      response: {
-        200: {
-          type: "object",
-          properties: {
-            txHash: { type: "string" },
-            verified: { type: "boolean" },
-          },
-        },
-      },
-    },
-    handler: controller.pause,
-  })
-
-  app.post("/subscriptions/:planId/resume", {
-    onRequest: app.authenticate,
-    schema: {
-      tags: ["subscriptions"],
-      description: "Confirm a wallet-signed resume subscription transaction",
-      params: {
-        type: "object",
-        properties: {
-          planId: { type: "number" },
-        },
-        required: ["planId"],
-      },
-      body: {
-        type: "object",
-        required: ["txHash"],
-        properties: {
-          txHash: { type: "string", pattern: "^0x[a-fA-F0-9]{64}$" },
-        },
-      },
-      response: {
-        200: {
-          type: "object",
-          properties: {
-            txHash: { type: "string" },
-            verified: { type: "boolean" },
-          },
-        },
-      },
-    },
-    handler: controller.resume,
   })
 }

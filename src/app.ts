@@ -1,5 +1,6 @@
 import "./types/index.js"
 
+import fastifyCors from "@fastify/cors"
 import fastifyJwt from "@fastify/jwt"
 import fastifyRateLimit from "@fastify/rate-limit"
 import fastifySwagger from "@fastify/swagger"
@@ -8,27 +9,27 @@ import Fastify, { FastifyInstance } from "fastify"
 import { Worker } from "bullmq"
 
 import { env } from "./config/index.js"
-import { SudoCardIssuer } from "./lib/card-issuer/sudo.adapter.js"
-import { closeQueueResources } from "./lib/queue.js"
-import { startArbitrumListener } from "./listeners/arbitrum.listener.js"
+import { createCardIssuer } from "./lib/card-issuer/factory.js"
+import { cardLoadQueue, cardUnloadQueue, closeQueueResources } from "./lib/queue.js"
+import { contractIds, rpcServer } from "./lib/stellar/client.js"
+import { getPlan, getSchedule, getSubscription } from "./lib/stellar/contracts.js"
+import { Indexer } from "./lib/stellar/indexer.js"
 import { registerAuthRoutes } from "./modules/auth/auth.routes.js"
 import { registerCardsRoutes } from "./modules/cards/cards.routes.js"
+import { registerDevRoutes, shouldRegisterDevRoutes } from "./modules/dev/dev.routes.js"
 import { registerDepositsRoutes } from "./modules/deposits/deposits.routes.js"
-import { registerFaucetRoutes } from "./modules/faucet/faucet.routes.js"
 import { registerSubscriptionsRoutes } from "./modules/subscriptions/subscriptions.routes.js"
 import { registerTransactionsRoutes } from "./modules/transactions/transactions.routes.js"
 import { registerUsersRoutes } from "./modules/users/users.routes.js"
 import { registerWebhooksRoutes } from "./modules/webhooks/webhooks.routes.js"
-import { registerSalaryStreamingRoutes } from "./modules/salary-streaming/salary-streaming.routes.js"
+import { registerPayrollRoutes } from "./modules/payroll/payroll.routes.js"
+import { registerDashboardRoutes } from "./modules/dashboard/dashboard.routes.js"
+import { registerStellarRoutes } from "./modules/stellar/stellar.routes.js"
 import { prismaPlugin } from "./plugins/prisma.js"
 import { redisPlugin } from "./plugins/redis.js"
 import { sensiblePlugin } from "./plugins/sensible.js"
-import { startDepositWorker } from "./workers/deposit.worker.js"
-import {
-  scheduleSubscriptionChecks,
-  startSubscriptionWorker,
-} from "./workers/subscription.worker.js"
-import { startTopupWorker } from "./workers/topup.worker.js"
+import { startCardLoadWorker, startCardUnloadWorker } from "./workers/card-movement.worker.js"
+import { scheduleKeeper, startKeeperWorker } from "./workers/keeper.worker.js"
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -46,6 +47,15 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(prismaPlugin)
   await app.register(redisPlugin)
 
+  // Exact origins from CORS_ORIGINS; no wildcard and no credentials (the JWT
+  // travels in the Authorization header, not in a cookie).
+  await app.register(fastifyCors, {
+    origin: env.CORS_ORIGINS,
+    methods: ["GET", "POST", "PATCH", "DELETE"],
+    allowedHeaders: ["Authorization", "Content-Type"],
+    credentials: false,
+  })
+
   await app.register(fastifyJwt, {
     secret: env.JWT_SECRET,
     sign: { expiresIn: env.JWT_EXPIRES_IN },
@@ -60,9 +70,25 @@ export async function buildApp(): Promise<FastifyInstance> {
     openapi: {
       info: {
         title: "Rubbi API",
-        version: "0.1.0",
-        description: "Rubbi backend API",
+        version: "0.2.0",
+        description:
+          "Rubbi backend on Stellar: SEP-10 auth, chain mirrors (vault, subscriptions, payroll), " +
+          "card loads/unloads through the vault, and a mock or Sudo card issuer.",
       },
+      tags: [
+        { name: "system" },
+        { name: "auth", description: "SEP-10 web authentication" },
+        { name: "users" },
+        { name: "cards", description: "Card, loads and unloads" },
+        { name: "deposits" },
+        { name: "transactions", description: "Wallet and card ledgers" },
+        { name: "subscriptions", description: "Mirror of the subscriptions contract" },
+        { name: "payroll", description: "Mirror of the payroll contract" },
+        { name: "dashboard" },
+        { name: "stellar", description: "Public network configuration" },
+        { name: "webhooks", description: "Card issuer callbacks" },
+        { name: "dev", description: "Development only" },
+      ],
     },
   })
 
@@ -70,11 +96,16 @@ export async function buildApp(): Promise<FastifyInstance> {
     routePrefix: "/docs",
   })
 
-  app.decorate("cardIssuer", new SudoCardIssuer({
-    apiKey: env.SUDO_API_KEY,
-    baseUrl: env.SUDO_BASE_URL,
-    defaultCustomerId: env.SUDO_DEFAULT_CUSTOMER_ID,
-  }))
+  app.decorate("cardIssuer", createCardIssuer(env))
+
+  app.decorate("cardMovements", {
+    enqueueLoad: async (movementId: string) => {
+      await cardLoadQueue.add("card-load", { movementId }, { jobId: movementId })
+    },
+    enqueueUnload: async (movementId: string) => {
+      await cardUnloadQueue.add("card-unload", { movementId }, { jobId: movementId })
+    },
+  })
 
   app.decorate("authenticate", async function authenticate(request, reply) {
     try {
@@ -113,40 +144,44 @@ export async function buildApp(): Promise<FastifyInstance> {
     await registerDepositsRoutes(api)
     await registerTransactionsRoutes(api)
     await registerSubscriptionsRoutes(api)
-    await registerFaucetRoutes(api)
-    await registerSalaryStreamingRoutes(api)
+    await registerPayrollRoutes(api)
+    await registerDashboardRoutes(api)
+    await registerStellarRoutes(api)
     await registerWebhooksRoutes(api)
+    if (shouldRegisterDevRoutes(env)) {
+      await registerDevRoutes(api)
+    }
   }, { prefix: "/api/v1" })
 
-  let stopListener: (() => void) | null = null
   let workers: Worker[] = []
+  let indexer: Indexer | null = null
 
   app.addHook("onReady", async () => {
-    // Do not block Fastify readiness on external provider startup.
-    // Listener backfill/RPC calls can exceed onReady timeout in hosted environments.
-    workers = [
-      startDepositWorker(app),
-      startTopupWorker(app),
-      startSubscriptionWorker(app),
-    ]
+    workers = [startCardLoadWorker(app), startCardUnloadWorker(app)]
 
-    void (async () => {
-      try {
-        stopListener = await startArbitrumListener(app)
-      } catch (error) {
-        app.log.error({ err: error }, "Arbitrum listener failed during background startup")
-      }
+    // Background chain work is not started under NODE_ENV=test; the indexer
+    // and keeper are exercised directly by their own tests.
+    if (env.NODE_ENV !== "test") {
+      indexer = new Indexer({
+        prisma: app.prisma,
+        rpc: rpcServer,
+        reads: { getPlan, getSchedule, getSubscription },
+        log: app.log.child({ component: "indexer" }),
+        contractIds: [contractIds.vault, contractIds.subscriptions, contractIds.payroll],
+        pollIntervalMs: env.INDEXER_POLL_INTERVAL_MS,
+        startLedger: env.INDEXER_START_LEDGER,
+      })
+      indexer.start()
 
-      try {
-        await scheduleSubscriptionChecks()
-      } catch (error) {
-        app.log.error({ err: error }, "Failed to schedule subscription checks")
-      }
-    })()
+      workers.push(startKeeperWorker(app))
+      void scheduleKeeper().catch((error) => {
+        app.log.error({ err: error }, "failed to schedule the keeper")
+      })
+    }
   })
 
   app.addHook("onClose", async () => {
-    stopListener?.()
+    indexer?.stop()
     await Promise.all(workers.map((worker) => worker.close()))
     await closeQueueResources()
   })

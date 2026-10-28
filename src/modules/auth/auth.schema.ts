@@ -1,22 +1,22 @@
 import { z } from "zod"
 
-const walletAddressSchema = z
-  .string()
-  .regex(/^0x[a-fA-F0-9]{40}$/, "Invalid wallet address")
+import { isAccountAddress, isContractAddress } from "../../lib/stellar/address.js"
 
-export const registerBodySchema = z.object({
-  walletAddress: walletAddressSchema,
-  username: z
+export const challengeQuerySchema = z.object({
+  account: z
     .string()
     .trim()
-    .min(3)
-    .max(32)
-    .regex(/^[a-zA-Z0-9_]+$/, "Username can only contain letters, numbers, underscores"),
+    .refine((value) => !isContractAddress(value), {
+      // SEP-45 is the web-authentication standard for contract accounts
+      // (passkey / smart wallets). It is a backlog item; see the README.
+      message: "Contract accounts (C...) are not supported yet; SEP-45 is a backlog item",
+    })
+    .refine(isAccountAddress, { message: "account must be a Stellar account id (G...)" }),
 })
 
-export const loginBodySchema = z.object({
-  walletAddress: walletAddressSchema,
+export const tokenBodySchema = z.object({
+  transaction: z.string().min(1, "transaction (base64 XDR) is required"),
 })
 
-export type RegisterBody = z.infer<typeof registerBodySchema>
-export type LoginBody = z.infer<typeof loginBodySchema>
+export type ChallengeQuery = z.infer<typeof challengeQuerySchema>
+export type TokenBody = z.infer<typeof tokenBodySchema>

@@ -26,6 +26,7 @@ function toIssuerStatus(status: string): IssuerCardStatus {
 }
 
 export class SudoCardIssuer implements ICardIssuer {
+  readonly name = "SUDO" as const
   private readonly apiKey: string
   private readonly baseUrl: string
   private readonly defaultCustomerId?: string
@@ -136,11 +137,27 @@ export class SudoCardIssuer implements ICardIssuer {
     return normalize(legacy)
   }
 
-  async fundCard(cardId: string, amountRubbi: string): Promise<void> {
+  /**
+   * TODO(verify): whether Sudo's fund endpoint accepts an idempotency key.
+   * `reference` is sent as `reference` in the body until that is confirmed.
+   */
+  async fundCard(cardId: string, amount: string, reference: string): Promise<void> {
     await this.request("POST", `/cards/${cardId}/fund`, {
-      amount: amountRubbi,
+      amount,
       currency: "USD",
+      reference,
     })
+  }
+
+  /**
+   * TODO(verify): the Sudo Africa endpoint for moving funds off a card is not
+   * documented in this repository and no sandbox is available yet. Until it
+   * is confirmed, unloads under CARD_ISSUER=sudo fail before anything moves.
+   */
+  async defundCard(cardId: string, amount: string, reference: string): Promise<void> {
+    throw new Error(
+      `Sudo defund is not implemented (card ${cardId}, amount ${amount}, reference ${reference}); see TODO(verify) in sudo.adapter.ts`,
+    )
   }
 
   async freezeCard(cardId: string): Promise<void> {

@@ -1,26 +1,25 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 
-import { loginBodySchema, registerBodySchema } from "./auth.schema.js"
-import { loginUser, registerUser } from "./auth.service.js"
+import { challengeQuerySchema, tokenBodySchema } from "./auth.schema.js"
+import { buildChallenge, verifyChallengeAndIssueToken } from "./auth.service.js"
 
 export function buildAuthController(app: FastifyInstance) {
   return {
-    register: async (
-      request: FastifyRequest,
-      reply: FastifyReply,
-    ) => {
-      const body = registerBodySchema.parse(request.body)
-      const result = await registerUser(app, body)
-      return reply.code(201).send(result)
+    challenge: async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = challengeQuerySchema.safeParse(request.query)
+      if (!parsed.success) {
+        throw app.httpErrors.badRequest(parsed.error.issues[0]?.message ?? "invalid account")
+      }
+      return reply.send(buildChallenge(parsed.data.account))
     },
 
-    login: async (
-      request: FastifyRequest,
-      reply: FastifyReply,
-    ) => {
-      const body = loginBodySchema.parse(request.body)
-      const result = await loginUser(app, body)
-      return reply.code(200).send(result)
+    token: async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = tokenBodySchema.safeParse(request.body)
+      if (!parsed.success) {
+        throw app.httpErrors.badRequest(parsed.error.issues[0]?.message ?? "invalid body")
+      }
+      const result = await verifyChallengeAndIssueToken(app, parsed.data.transaction)
+      return reply.send(result)
     },
   }
 }
