@@ -1,6 +1,32 @@
-# Rubbi API — Integration Guide (Stellar)
+# Rubbi API
 
-Backend for Rubbi on Stellar: SEP-10 authentication, an event indexer that mirrors the vault, subscriptions and payroll contracts, card loads and unloads through the vault, and a virtual card from a mock issuer (or Sudo Africa). Part of the Rubbi repos: [RL-smart-contracts](https://github.com/RubbiLabs/RL-smart-contracts) (Soroban contracts) and [RL-frontend](https://github.com/RubbiLabs/RL-frontend).
+[Rubbi](https://github.com/RubbiLabs) is a payment automation platform for users in Nigeria: a USDC balance on Stellar (the Rubbi wallet), a virtual card loaded from it, recurring subscriptions paid from the user's own wallet, and recurring payroll from an employer escrow. This repository is the backend (Bun, Fastify, Prisma, PostgreSQL, Redis, BullMQ): SEP-10 sign-in, an event indexer that mirrors the vault, subscriptions and payroll contracts into Postgres, the keeper that runs due charges and payroll, card loading and unloading through the vault, and the card issuer adapter (a mock issuer today, Sudo Africa behind `CARD_ISSUER=sudo`). It runs on Stellar testnet.
+
+## How the Rubbi repositories fit together
+
+Rubbi is three repositories under the [RubbiLabs](https://github.com/RubbiLabs) organisation. Nothing moves money except a transaction signed by the user's own wallet or by one of the backend's narrowly scoped keys.
+
+| Repository | Role | Talks to |
+|---|---|---|
+| [RL-smart-contracts](https://github.com/RubbiLabs/RL-smart-contracts) | Soroban contracts on Stellar: vault (Rubbi wallet and card funding), subscriptions (allowance-based recurring payments), payroll (employer escrow) | USDC on Stellar; called by users' wallets and by the backend keys |
+| **RL-api (this repository)** | Backend: SEP-10 sign-in, event indexer that mirrors contract events into Postgres, keeper that runs due charges and payroll, card loading and unloading, card issuer adapter | Stellar RPC and the three contracts; serves the frontend over REST |
+| [RL-frontend](https://github.com/RubbiLabs/RL-frontend) | Next.js web app: wallet connection (Stellar Wallets Kit), sign-in, wallet and card, subscriptions, payroll | users' wallets (signing), the contracts (direct calls), the API (REST + JWT) |
+
+```mermaid
+flowchart LR
+  W[User wallet] -->|connect, sign| FE[RL-frontend]
+  FE -->|signed transactions| C[Soroban contracts<br/>vault · subscriptions · payroll]
+  FE -->|REST, SEP-10 JWT| API[RL-api]
+  API -->|keeper: charge_batch / disburse_batch<br/>operator: load card<br/>treasury: unload card| C
+  C -.->|events via the indexer| API
+  API -->|fund / defund card| ISS[Card issuer]
+```
+
+- **A user action.** A deposit is signed in the user's wallet and lands in the vault contract; the indexer sees the `deposit` event and records it; the app shows the new balance.
+- **A recurring payment.** When a subscription or salary falls due, the keeper calls `charge_batch` or `disburse_batch`. Anyone could make that call, but nobody can charge early or twice: the contracts are time-gated and pay exactly one period.
+- **Where to start.** The contracts if you write Rust/Soroban, the API for a TypeScript backend, the frontend for React.
+
+Other repositories: [RL-smart-contracts](https://github.com/RubbiLabs/RL-smart-contracts) and [RL-frontend](https://github.com/RubbiLabs/RL-frontend). Organisation: https://github.com/RubbiLabs.
 
 Design document: [PRD.md](PRD.md). Swagger UI: `GET /docs`.
 
