@@ -194,3 +194,17 @@ Contract error codes are mirrored in `src/lib/stellar/errors.ts`; the authoritat
 **CardMovement:** id, userId, direction (LOAD|UNLOAD), amount, reference (unique), status, txHash, failureReason, compensatesId
 **SubscriptionPlan / Subscription / PayrollSchedule:** mirrors of the contracts (see PRD.md §7)
 **ChainCursor / ProcessedEvent / ChainGap:** indexer state
+
+---
+
+## Contributing via Drips Wave
+
+Rubbi takes part in the Stellar Wave programme on [Drips](https://www.drips.network/): issues labelled **`Stellar Wave`** are scoped, paid tasks open to outside contributors. Each one states its Context, Scope, Acceptance criteria and Complexity (Trivial / Medium / High). Comment on an issue to claim it, wait for a maintainer to assign it, then open a pull request that closes it with every acceptance criterion met and all checks green. One claimed issue per contributor at a time.
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the setup, the branch and Conventional Commit rules, the pull request checklist, test expectations and the AI-assistance policy (tools are fine; you must understand, test and be able to explain every line, and low-effort generated pull requests are closed). Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report security issues privately per [SECURITY.md](SECURITY.md), never in a public issue.
+
+Related repositories: [RL-smart-contracts](https://github.com/RubbiLabs/RL-smart-contracts) (Soroban contracts) and [RL-frontend](https://github.com/RubbiLabs/RL-frontend) (web app) use the same conventions and have their own Wave issues.
+
+## License
+
+[MIT](LICENSE).
