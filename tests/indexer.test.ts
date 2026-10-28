@@ -249,6 +249,98 @@ describe("indexer: vault events and the wallet ledger", () => {
     expect(prisma.rows("transaction")).toHaveLength(0)
     expect(prisma.rows("processedEvent")).toHaveLength(1)
   })
+
+  test("every money event for addresses without a User row is logged, marked processed and never blocks the cursor", async () => {
+    // No users at all: this is what the indexer sees when outside accounts
+    // (demo identities, other wallets) use the contracts directly.
+    const prisma = makeFakePrisma()
+    const vault = TEST_ENV.VAULT_CONTRACT_ID
+    const subs = TEST_ENV.SUBSCRIPTIONS_CONTRACT_ID
+    const payroll = TEST_ENV.PAYROLL_CONTRACT_ID
+    const reference = "cd".repeat(32)
+    const errors: string[] = []
+    const log = { ...makeLog(), error: (_o: unknown, msg: string) => errors.push(msg) }
+    const { rpc } = makeRpc([
+      {
+        events: [
+          ev(vault, "deposit", [addr(OTHER_ADDRESS)], [["amount", i128(50_000_000n)]]),
+          ev(vault, "withdraw", [addr(OTHER_ADDRESS)], [["amount", i128(10_000_000n)]]),
+          ev(vault, "card_spend_settled", [addr(OTHER_ADDRESS)], [
+            ["amount", i128(20_000_000n)],
+            ["reference", bytes32(reference)],
+          ]),
+          ev(vault, "refund_credited", [addr(OTHER_ADDRESS)], [
+            ["amount", i128(10_000_000n)],
+            ["reference", bytes32(reference)],
+          ]),
+          ev(subs, "subscribed", [addr(OTHER_ADDRESS)], [
+            ["sub_id", u64(3n)],
+            ["plan_id", u32(1)],
+            ["next_due", u64(1_764_192_000n)],
+          ]),
+          ev(subs, "charged", [addr(OTHER_ADDRESS)], [
+            ["sub_id", u64(3n)],
+            ["plan_id", u32(1)],
+            ["merchant", addr(USER_ADDRESS)],
+            ["amount", i128(10_000_000n)],
+            ["fee", i128(50_000n)],
+            ["next_due", u64(1_766_784_000n)],
+          ]),
+          ev(payroll, "schedule_created", [addr(OTHER_ADDRESS)], [
+            ["schedule_id", u64(4n)],
+            ["recipient", addr(USER_ADDRESS)],
+            ["amount", i128(10_000_000n)],
+            ["period", u64(86_400n)],
+            ["next_due", u64(1_764_192_000n)],
+          ]),
+          ev(payroll, "disbursed", [addr(OTHER_ADDRESS)], [
+            ["schedule_id", u64(4n)],
+            ["recipient", addr(USER_ADDRESS)],
+            ["amount", i128(10_000_000n)],
+            ["fee", i128(50_000n)],
+            ["next_due", u64(1_766_784_000n)],
+          ]),
+        ],
+        cursor: "c-unknown",
+      },
+    ])
+    const indexer = await makeIndexer(prisma, rpc, { log })
+    const result = await indexer.runOnce()
+
+    // All eight applied exactly once; nothing thrown, nothing retried.
+    expect(result).toMatchObject({ fetched: 8, applied: 8, skipped: 0, cursor: "c-unknown" })
+    expect(prisma.rows("processedEvent")).toHaveLength(8)
+    expect(prisma.rows("chainCursor")[0]).toMatchObject({ cursor: "c-unknown" })
+    expect(errors).toHaveLength(0)
+
+    // No balances, ledger rows or deposits are created for non-users ...
+    expect(prisma.rows("user")).toHaveLength(0)
+    expect(prisma.rows("transaction")).toHaveLength(0)
+    expect(prisma.rows("deposit")).toHaveLength(0)
+    expect(prisma.rows("cardMovement")).toHaveLength(0)
+
+    // ... while the public mirrors still record the on-chain state, unlinked.
+    expect(prisma.rows("subscription")[0]).toMatchObject({
+      onChainSubId: 3n,
+      subscriber: OTHER_ADDRESS,
+      userId: null,
+      status: "ACTIVE",
+      nextDueAt: new Date(1_766_784_000 * 1000),
+    })
+    expect(prisma.rows("payrollSchedule")[0]).toMatchObject({
+      onChainId: 4n,
+      employer: OTHER_ADDRESS,
+      employerUserId: null,
+      recipient: USER_ADDRESS,
+      nextDueAt: new Date(1_766_784_000 * 1000),
+    })
+
+    // A replay of the same page is a no-op.
+    const { rpc: again } = makeRpc([{ events: [], cursor: "c-unknown" }])
+    const second = await (await makeIndexer(prisma, again, { log })).runOnce()
+    expect(second.applied).toBe(0)
+    expect(prisma.rows("processedEvent")).toHaveLength(8)
+  })
 })
 
 describe("indexer: cursor, paging and retention gaps", () => {
