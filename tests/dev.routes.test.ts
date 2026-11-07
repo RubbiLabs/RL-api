@@ -111,3 +111,30 @@ describe("POST /dev/mock-card-spend", () => {
     expect(body.type).toBe("transaction.created")
   })
 })
+
+
+describe("POST /dev/keeper-run (#4)", () => {
+  test("executes dry-run pass and returns summary", async () => {
+    const prisma = makeFakePrisma()
+    const app = Fastify()
+    await app.register(fastifySensible)
+    app.decorate("prisma", prisma as any)
+    app.decorate("redis", makeRedis() as any)
+
+    const { registerDevRoutes } = await import("../src/modules/dev/dev.routes.js")
+    await app.register(registerDevRoutes, { prefix: "/api/v1" })
+    await app.ready()
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/dev/keeper-run",
+      payload: { dryRun: true },
+    })
+
+    expect(response.statusCode).toBe(200)
+    const body = response.json()
+    expect(body.subscriptions).toBeDefined()
+    expect(body.payroll).toBeDefined()
+    await app.close()
+  })
+})
