@@ -31,6 +31,8 @@ export const TEST_ENV = {
   JWT_SECRET: "test-jwt-secret-test-jwt-secret-1234",
   JWT_EXPIRES_IN: "24h",
   CORS_ORIGINS: "http://localhost:3001,https://app.rubbi.test",
+  AUTH_CHALLENGE_LIMIT_PER_ACCOUNT: "10",
+  AUTH_TOKEN_LIMIT_PER_ACCOUNT: "10",
 } as const
 
 export const USER_ADDRESS = "GCW4BXKRNKDICUSCI3RVP3MYTPQWMZ7ABCGAF5CZIWZ22U6TBIRDYE6G"

@@ -66,7 +66,7 @@ const envSchema = z
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
 
     DATABASE_URL: z.string().min(1),
-    REDIS_URL: z.string().min(1),
+    REDIS_URL: optionalString(),
 
     STELLAR_NETWORK: z.enum(["testnet", "mainnet"]).default("testnet"),
     STELLAR_RPC_URL: z.string().url(),
@@ -103,6 +103,9 @@ const envSchema = z
     SUDO_BASE_URL: z.string().url().default("https://api.sudo.africa"),
     SUDO_DEFAULT_CUSTOMER_ID: optionalString(),
     SUDO_WEBHOOK_SECRET: optionalString(),
+
+    AUTH_CHALLENGE_LIMIT_PER_ACCOUNT: z.coerce.number().int().positive().default(10),
+    AUTH_TOKEN_LIMIT_PER_ACCOUNT: z.coerce.number().int().positive().default(10),
 
     JWT_SECRET: z.string().min(32),
     JWT_EXPIRES_IN: z.string().default("24h"),

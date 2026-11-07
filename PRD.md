@@ -137,6 +137,8 @@ See `.env.example`. Validated by Zod in `src/config/index.ts`; the process refus
 | `CARD_ISSUER` | | `mock` (default) or `sudo` |
 | `SUDO_API_KEY`, `SUDO_WEBHOOK_SECRET` | with `sudo` | `SUDO_WEBHOOK_SECRET` is also required in production with the mock issuer |
 | `SUDO_BASE_URL`, `SUDO_DEFAULT_CUSTOMER_ID` | no | |
+| `AUTH_CHALLENGE_LIMIT_PER_ACCOUNT` | | default 10: per-minute rate limit for `GET /auth/challenge` per Stellar account |
+| `AUTH_TOKEN_LIMIT_PER_ACCOUNT` | | default 10: per-minute rate limit for `POST /auth/token` per Stellar account (401 failures count double) |
 | `JWT_SECRET`, `JWT_EXPIRES_IN` | yes | ≥ 32 chars; the example placeholder is rejected in production |
 | `CORS_ORIGINS` | | comma-separated absolute URLs of the browser origins allowed by CORS (exact match, no wildcard, no credentials); default `http://localhost:3001` (the frontend dev server; the API itself uses port 3000) |
 
