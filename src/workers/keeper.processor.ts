@@ -3,6 +3,8 @@ import { PrismaClient, ScheduleStatus, SubStatus } from "@prisma/client"
 import type { KeeperHolds } from "../lib/keeper-holds.js"
 import type { RubbiEvent } from "../lib/stellar/events.js"
 import type { BatchOutcome, KeeperChain } from "../lib/stellar/keeper-chain.js"
+import { alerts } from "../lib/alerts.js"
+import { metrics } from "../lib/metrics.js"
 
 /** `MAX_BATCH` of the contracts. */
 export const MAX_BATCH = 25
@@ -185,6 +187,30 @@ export async function runKeeper(deps: KeeperDeps): Promise<KeeperRunResult> {
     "payroll",
     dueSchedules.map((s) => BigInt(s.onChainId)),
   )
+
+  metrics.setKeeperLastRun(Math.floor(now.getTime() / 1000), now.toISOString(), "ok")
+  metrics.incKeeperRuns("ok")
+
+  // Record item metrics
+  metrics.incKeeperItems("charge", "charged", subscriptions.paid)
+  metrics.incKeeperItems("charge", "held", subscriptions.newHolds)
+  metrics.incKeeperItems("charge", "not_due", subscriptions.notDue)
+  metrics.incKeeperItems("charge", "past_due", subscriptions.businessFailures)
+  metrics.incKeeperItems("charge", "failed", subscriptions.erroredAlone)
+
+  metrics.incKeeperItems("disburse", "disbursed", payroll.paid)
+  metrics.incKeeperItems("disburse", "held", payroll.newHolds)
+  metrics.incKeeperItems("disburse", "not_due", payroll.notDue)
+  metrics.incKeeperItems("disburse", "failed", payroll.businessFailures + payroll.erroredAlone)
+
+  // Trigger alerts if items errored alone
+  const totalErroredAlone = subscriptions.erroredAlone + payroll.erroredAlone
+  if (totalErroredAlone > 0) {
+    void alerts.dispatch("items_failing_alone", `Keeper run had ${totalErroredAlone} item(s) failing alone`, {
+      subscriptionsErroredAlone: subscriptions.erroredAlone,
+      payrollErroredAlone: payroll.erroredAlone,
+    })
+  }
 
   deps.log.info({ subscriptions, payroll }, "keeper run finished")
   return { subscriptions, payroll }
