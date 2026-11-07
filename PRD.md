@@ -128,6 +128,9 @@ See `.env.example`. Validated by Zod in `src/config/index.ts`; the process refus
 | `STELLAR_NETWORK_PASSPHRASE` | | defaults to the passphrase of `STELLAR_NETWORK` |
 | `USDC_SAC_ID`, `VAULT_CONTRACT_ID`, `SUBSCRIPTIONS_CONTRACT_ID`, `PAYROLL_CONTRACT_ID` | yes | must be valid `C...` contract ids |
 | `OPERATOR_SECRET`, `KEEPER_SECRET`, `SEP10_SIGNING_SECRET` | yes | valid `S...` seeds; the all-zero placeholder is rejected in production |
+| `FEE_SPONSOR_SECRET` | no | optional secret of the account sponsoring transaction fees via fee-bumps |
+| `FEE_SPONSOR_MAX_FEE_STROOPS` | | default 500000 (0.05 XLM): maximum fee sponsored per transaction |
+| `FEE_SPONSOR_DAILY_LIMIT_PER_ACCOUNT` | | default 20: maximum sponsored transactions per account per day |
 | `TREASURY_SECRET` | no | when unset, card unloads wait in `PENDING_TREASURY` for `scripts/process-pending-unloads.ts` |
 | `HOME_DOMAIN`, `WEB_AUTH_DOMAIN` | yes | SEP-10 domains |
 | `INDEXER_POLL_INTERVAL_MS` | | default 5000 |

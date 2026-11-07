@@ -82,6 +82,9 @@ const envSchema = z
     OPERATOR_SECRET: stellarSecret,
     KEEPER_SECRET: stellarSecret,
     SEP10_SIGNING_SECRET: stellarSecret,
+    FEE_SPONSOR_SECRET: z.preprocess(blankToUndefined, stellarSecret.optional()),
+    FEE_SPONSOR_MAX_FEE_STROOPS: z.coerce.number().int().positive().default(500_000),
+    FEE_SPONSOR_DAILY_LIMIT_PER_ACCOUNT: z.coerce.number().int().positive().default(20),
     // Optional: when unset, card unloads wait in PENDING_TREASURY for manual processing.
     TREASURY_SECRET: z.preprocess(blankToUndefined, stellarSecret.optional()),
 
@@ -132,6 +135,7 @@ const envSchema = z
       "KEEPER_SECRET",
       "SEP10_SIGNING_SECRET",
       "TREASURY_SECRET",
+      "FEE_SPONSOR_SECRET",
     ] as const) {
       if (value[key] === PLACEHOLDER_SECRET) {
         ctx.addIssue({
