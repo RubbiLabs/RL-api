@@ -166,9 +166,10 @@ describe("indexer: vault events and the wallet ledger", () => {
       { events: [ev(TEST_ENV.VAULT_CONTRACT_ID, "withdraw", [addr(USER_ADDRESS)], [["amount", i128(50_000_000n)]])], cursor: "c1" },
     ])
     const indexer = await makeIndexer(prisma, rpc)
-    const { LedgerInvariantError } = await import("../src/lib/stellar/handlers.js")
+    const result = await indexer.runOnce()
 
-    await expect(indexer.runOnce()).rejects.toThrow(LedgerInvariantError)
+    expect(result.retrying).toBe(1)
+    expect(result.applied).toBe(0)
     expect(prisma.rows("chainCursor")).toHaveLength(0)
   })
 
@@ -564,5 +565,144 @@ describe("indexer: subscription and payroll mirrors", () => {
       ["staff", "PAYROLL_DISBURSED"],
     ])
     for (const u of prisma.rows("user")) expect(u.walletBalance.toFixed()).toBe("0")
+  })
+})
+
+describe("indexer: dead-letter handling and retries", () => {
+  test("poisoned event is retried up to INDEXER_MAX_ATTEMPTS, lands in deadLetterEvent, and cursor advances", async () => {
+    const prisma = makeFakePrisma()
+    prisma.seed("user", [{ id: "u1", stellarAddress: USER_ADDRESS, walletBalance: new Prisma.Decimal("1") }])
+
+    const badWithdraw = ev(TEST_ENV.VAULT_CONTRACT_ID, "withdraw", [addr(USER_ADDRESS)], [["amount", i128(200_000_000n)]], 101)
+    const goodDeposit = ev(TEST_ENV.VAULT_CONTRACT_ID, "deposit", [addr(USER_ADDRESS)], [["amount", i128(500_000_000n)]], 102)
+
+    const { rpc } = makeRpc([
+      { events: [badWithdraw, goodDeposit], cursor: "c-bad" },
+      { events: [badWithdraw, goodDeposit], cursor: "c-bad" },
+      { events: [badWithdraw, goodDeposit], cursor: "c-bad" },
+    ])
+
+    const indexer = await makeIndexer(prisma, rpc, { maxAttempts: 3, backoffBaseMs: 0 })
+
+    // Attempt 1: badWithdraw fails -> retrying
+    const res1 = await indexer.runOnce()
+    expect(res1.retrying).toBe(1)
+    expect(res1.applied).toBe(0)
+    expect(prisma.rows("chainCursor")).toHaveLength(0)
+    expect(prisma.rows("deadLetterEvent")).toHaveLength(0)
+
+    // Attempt 2: badWithdraw fails again -> retrying
+    const res2 = await indexer.runOnce()
+    expect(res2.retrying).toBe(1)
+    expect(prisma.rows("chainCursor")).toHaveLength(0)
+
+    // Attempt 3: badWithdraw hits maxAttempts (3) -> dead-lettered!
+    // Cursor advances past it and goodDeposit is applied!
+    const res3 = await indexer.runOnce()
+    expect(res3.deadLettered).toBe(1)
+    expect(res3.applied).toBe(1)
+    expect(prisma.rows("deadLetterEvent")).toHaveLength(1)
+    expect(prisma.rows("deadLetterEvent")[0]).toMatchObject({
+      eventId: badWithdraw.id,
+      attempts: 3,
+      type: "vault.withdraw",
+    })
+    expect(prisma.rows("chainCursor")[0]).toMatchObject({ cursor: "c-bad" })
+
+    // User's deposit was credited
+    const user = prisma.rows("user")[0]!
+    expect(user.walletBalance.toFixed()).toBe("51")
+  })
+
+  test("event that fails transiently and then succeeds is applied once and never dead-lettered", async () => {
+    const prisma = makeFakePrisma()
+    prisma.seed("user", [{ id: "u1", stellarAddress: USER_ADDRESS, walletBalance: new Prisma.Decimal("10") }])
+
+    let attempts = 0
+    const flakyReads = {
+      ...reads,
+      getSchedule: async (id: bigint) => {
+        attempts++
+        if (attempts <= 2) throw new Error("Flaky RPC network failure")
+        return reads.getSchedule(id)
+      },
+    }
+
+    const scheduleCreated = ev(
+      TEST_ENV.PAYROLL_CONTRACT_ID,
+      "schedule_created",
+      [addr(USER_ADDRESS)],
+      [
+        ["schedule_id", u64(99n)],
+        ["recipient", addr(OTHER_ADDRESS)],
+        ["amount", i128(1_500_000_000n)],
+        ["period", u64(2_592_000n)],
+        ["next_due", u64(1_764_192_000n)],
+      ],
+      105,
+    )
+
+    const { rpc } = makeRpc([
+      { events: [scheduleCreated], cursor: "c-flaky" },
+      { events: [scheduleCreated], cursor: "c-flaky" },
+      { events: [scheduleCreated], cursor: "c-flaky" },
+    ])
+
+    const { Indexer } = await import("../src/lib/stellar/indexer.js")
+    const indexer = new Indexer({
+      prisma: prisma as any,
+      rpc: rpc as any,
+      reads: flakyReads,
+      log: makeLog() as any,
+      contractIds: CONTRACTS,
+      pollIntervalMs: 1_000,
+      maxAttempts: 5,
+      backoffBaseMs: 0,
+    })
+
+    // Run 1: fails
+    const r1 = await indexer.runOnce()
+    expect(r1.retrying).toBe(1)
+    expect(prisma.rows("deadLetterEvent")).toHaveLength(0)
+
+    // Run 2: fails
+    const r2 = await indexer.runOnce()
+    expect(r2.retrying).toBe(1)
+    expect(prisma.rows("deadLetterEvent")).toHaveLength(0)
+
+    // Run 3: succeeds!
+    const r3 = await indexer.runOnce()
+    expect(r3.applied).toBe(1)
+    expect(prisma.rows("deadLetterEvent")).toHaveLength(0)
+    expect(prisma.rows("payrollSchedule")).toHaveLength(1)
+    expect(prisma.rows("chainCursor")[0]).toMatchObject({ cursor: "c-flaky" })
+  })
+
+  test("earlier events in page are not applied twice when a later event retries", async () => {
+    const prisma = makeFakePrisma()
+    prisma.seed("user", [{ id: "u1", stellarAddress: USER_ADDRESS, walletBalance: new Prisma.Decimal("10") }])
+
+    const dep1 = ev(TEST_ENV.VAULT_CONTRACT_ID, "deposit", [addr(USER_ADDRESS)], [["amount", i128(100_000_000n)]], 110)
+    const badWithdraw = ev(TEST_ENV.VAULT_CONTRACT_ID, "withdraw", [addr(USER_ADDRESS)], [["amount", i128(999_000_000n)]], 111)
+
+    const { rpc } = makeRpc([
+      { events: [dep1, badWithdraw], cursor: "c-order" },
+      { events: [dep1, badWithdraw], cursor: "c-order" },
+    ])
+
+    const indexer = await makeIndexer(prisma, rpc, { maxAttempts: 5, backoffBaseMs: 0 })
+
+    // Poll 1: dep1 applied, badWithdraw retries
+    const res1 = await indexer.runOnce()
+    expect(res1.applied).toBe(1)
+    expect(res1.retrying).toBe(1)
+    expect(prisma.rows("user")[0]!.walletBalance.toFixed()).toBe("20")
+
+    // Poll 2: dep1 is skipped as duplicate, badWithdraw retries
+    const res2 = await indexer.runOnce()
+    expect(res2.applied).toBe(0)
+    expect(res2.skipped).toBe(1)
+    expect(res2.retrying).toBe(1)
+    expect(prisma.rows("user")[0]!.walletBalance.toFixed()).toBe("20")
   })
 })

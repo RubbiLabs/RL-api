@@ -53,6 +53,14 @@ const MODELS: Record<string, ModelSpec> = {
   chainCursor: { uniques: [["id"]] },
   processedEvent: { uniques: [["eventId"]] },
   chainGap: { uniques: [["id"]], defaults: () => ({ resolvedAt: null }) },
+  deadLetterEvent: {
+    uniques: [["id"], ["eventId"]],
+    defaults: () => ({
+      reprocessedAt: null,
+      firstFailedAt: new Date(),
+      deadAt: new Date(),
+    }),
+  },
 }
 
 let idCounter = 0

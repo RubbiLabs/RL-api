@@ -126,15 +126,48 @@ export async function buildApp(): Promise<FastifyInstance> {
             status: { type: "string" },
             service: { type: "string" },
             timestamp: { type: "string", format: "date-time" },
+            indexer: {
+              type: "object",
+              properties: {
+                deadLetters: { type: "number" },
+                oldestDeadLetterId: { type: ["string", "null"] },
+              },
+            },
           },
         },
       },
     },
-    handler: async () => ({
-      status: "ok",
-      service: "rubbi-api",
-      timestamp: new Date().toISOString(),
-    }),
+    handler: async () => {
+      let deadLetters = 0
+      let oldestDeadLetterId: string | null = null
+      try {
+        deadLetters = await app.prisma.deadLetterEvent.count({
+          where: { reprocessedAt: null },
+        })
+        if (deadLetters > 0) {
+          const oldest = await app.prisma.deadLetterEvent.findFirst({
+            where: { reprocessedAt: null },
+            orderBy: { deadAt: "asc" },
+            select: { id: true, eventId: true },
+          })
+          oldestDeadLetterId = oldest ? (oldest.eventId || oldest.id) : null
+        }
+      } catch {
+        // In case dead letter table is not initialized yet in non-migrated environment
+      }
+
+      const status = deadLetters > 0 ? "degraded" : "ok"
+
+      return {
+        status,
+        service: "rubbi-api",
+        timestamp: new Date().toISOString(),
+        indexer: {
+          deadLetters,
+          oldestDeadLetterId,
+        },
+      }
+    },
   })
 
   await app.register(async (api) => {

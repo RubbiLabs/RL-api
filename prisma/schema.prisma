@@ -188,6 +188,27 @@ model ProcessedEvent {
   @@index([contractId, ledger])
 }
 
+/// Events that failed application repeatedly until reaching INDEXER_MAX_ATTEMPTS.
+/// The ProcessedEvent row is inserted in the same transaction so the event is
+/// skipped on future polls and indexing continues.
+model DeadLetterEvent {
+  id            String    @id @default(uuid())
+  eventId       String    @unique
+  contractId    String
+  type          String
+  ledger        Int
+  txHash        String
+  raw           Json
+  attempts      Int
+  lastError     String
+  firstFailedAt DateTime  @default(now())
+  deadAt        DateTime  @default(now())
+  reprocessedAt DateTime?
+
+  @@index([contractId, ledger])
+  @@index([reprocessedAt])
+}
+
 /// A range of ledgers the indexer could not read because the RPC's retention
 /// window had moved past the saved cursor. Backfill tooling starts here.
 model ChainGap {

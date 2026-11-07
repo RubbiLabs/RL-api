@@ -236,3 +236,26 @@ Related repositories: [RL-smart-contracts](https://github.com/RubbiLabs/RL-smart
 ## License
 
 [MIT](LICENSE).
+
+
+### Indexer Dead-Letter Handling and Reprocessing
+
+When an on-chain event causes an unrecoverable effect error (such as a ledger invariant mismatch, archived on-chain state, or contract decode edge case), the indexer retries the event with exponential backoff up to `INDEXER_MAX_ATTEMPTS` (default 5).
+
+Once an event reaches the maximum retry limit:
+1. It is moved to the `DeadLetterEvent` table in Postgres with details (`eventId`, `contractId`, `type`, `ledger`, `txHash`, `raw` payload, `attempts`, `lastError`, `firstFailedAt`, `deadAt`).
+2. A `ProcessedEvent` row is recorded in the same database transaction so the failing event is skipped on future polls, allowing the cursor to advance past the failure.
+3. `GET /health` reports `status: "degraded"` along with `indexer.deadLetters` count and the `oldestDeadLetterId`.
+
+#### Operator Reprocessing Procedure
+Once the underlying issue is resolved (for example by repairing an off-chain ledger discrepancy or fixing a contract mirror):
+```bash
+# Reprocess a specific event by eventId or dead letter ID
+bun run indexer:reprocess --id <eventId>
+
+# Reprocess all unresolved dead letters
+bun run indexer:reprocess --all
+
+# Dry-run inspection without making database changes
+bun run indexer:reprocess --all --dry-run
+```
