@@ -30,6 +30,15 @@ export function contractNameOf(contractId: string): RubbiContract | null {
 let operator: Keypair | null = null
 let keeper: Keypair | null = null
 let treasury: Keypair | null | undefined
+let feeSponsor: Keypair | null | undefined
+
+/** Signs fee-bump envelopes for sponsored user transactions. Null when FEE_SPONSOR_SECRET is unset. */
+export function getFeeSponsorKeypair(): Keypair | null {
+  if (feeSponsor === undefined) {
+    feeSponsor = env.FEE_SPONSOR_SECRET ? Keypair.fromSecret(env.FEE_SPONSOR_SECRET) : null
+  }
+  return feeSponsor
+}
 
 /** Signs `settle_card_spend` (card loads). */
 export function getOperatorKeypair(): Keypair {
