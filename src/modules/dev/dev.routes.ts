@@ -111,4 +111,52 @@ export async function registerDevRoutes(app: FastifyInstance) {
       })
     },
   })
+  const keeperRunBodySchema = z.object({
+    dryRun: z.boolean().default(false),
+  })
+
+  app.post("/dev/keeper-run", {
+    schema: {
+      tags: ["dev"],
+      summary: "Run one keeper pass (mock issuer only)",
+      description:
+        "Triggers one keeper run in-process for subscriptions and payroll. With dryRun: true, " +
+        "simulates batch calls and returns per-item results without submitting transactions. " +
+        "Only registered outside production with CARD_ISSUER=mock.",
+      body: {
+        type: "object",
+        properties: {
+          dryRun: { type: "boolean", default: false },
+        },
+      },
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            subscriptions: { type: "object", additionalProperties: true },
+            payroll: { type: "object", additionalProperties: true },
+          },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const parsed = keeperRunBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw app.httpErrors.badRequest(parsed.error.issues[0]?.message ?? "invalid body")
+      }
+      const { dryRun } = parsed.data
+
+      const deps = {
+        prisma: app.prisma,
+        chain: makeKeeperChain({ dryRun }),
+        holds: makeRedisHolds(app.redis),
+        log: app.log.child({ component: "keeper-dev" }),
+        holdSeconds: env.KEEPER_HOLD_SECONDS,
+      }
+
+      const result = await runKeeperOnce(deps, { dryRun })
+      return reply.send(result)
+    },
+  })
+
 }

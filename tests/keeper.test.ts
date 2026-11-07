@@ -227,3 +227,52 @@ describe("keeper: classification of false results", () => {
     expect(await holds.isHeld("payroll", 8n)).toBe(false)
   })
 })
+
+
+describe("keeper: dry-run (#4)", () => {
+  test("runKeeperOnce with dryRun: true passes flag to chain and skips redis hold writes", async () => {
+    const prisma = makeFakePrisma()
+    seedSubs(prisma, [1])
+
+    let passedDryRun = false
+    const chain = {
+      chargeBatch: async (_ids: bigint[], opts?: { dryRun?: boolean }) => {
+        passedDryRun = opts?.dryRun === true
+        return {
+          hash: "dry_run",
+          results: [false],
+          events: [{ contract: "subscriptions", name: "charge_skipped", sub_id: 1n, reason: "merchant_inactive" }],
+        }
+      },
+      charge: async () => {
+        throw new Error("charge single should not be called")
+      },
+      disburseBatch: async () => ({ hash: "dry_run", results: [], events: [] }),
+      disburse: async () => {
+        throw new Error("disburse single should not be called")
+      },
+    }
+
+    const { runKeeperOnce } = await import("../src/workers/keeper.processor.js")
+    const { makeMemoryHolds } = await import("../src/lib/keeper-holds.js")
+    const holds = makeMemoryHolds()
+
+    const result = await runKeeperOnce(
+      {
+        prisma,
+        chain: chain as any,
+        holds,
+        log: makeLog() as any,
+        holdSeconds: 3600,
+        now: () => NOW,
+      },
+      { dryRun: true },
+    )
+
+    expect(passedDryRun).toBe(true)
+    expect(result.subscriptions.due).toBe(1)
+    expect(result.subscriptions.newHolds).toBe(1)
+    // Item was not permanently recorded in Redis holds during dry run
+    expect(await holds.isHeld("subscriptions", 1n)).toBe(false)
+  })
+})
