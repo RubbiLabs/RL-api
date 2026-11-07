@@ -31,6 +31,14 @@ export async function registerAuthRoutes(app: FastifyInstance) {
             network_passphrase: { type: "string" },
           },
         },
+        429: {
+          type: "object",
+          properties: {
+            statusCode: { type: "number" },
+            error: { type: "string" },
+            message: { type: "string" },
+          },
+        },
       },
     },
     handler: controller.challenge,
@@ -66,6 +74,14 @@ export async function registerAuthRoutes(app: FastifyInstance) {
                 username: { type: "string", nullable: true },
               },
             },
+          },
+        },
+        429: {
+          type: "object",
+          properties: {
+            statusCode: { type: "number" },
+            error: { type: "string" },
+            message: { type: "string" },
           },
         },
       },

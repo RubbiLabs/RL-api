@@ -76,7 +76,7 @@ const { signedTxXdr } = await kit.signTransaction(transaction, { networkPassphra
 const { token } = await api.post("/auth/token", { transaction: signedTxXdr })
 ```
 
-Limits: only the account's master key is accepted (multisig accounts and contract accounts / passkey wallets are backlog items: Horizon signer lookup, SEP-45). Contract ids (`C...`) are rejected with 400.
+Limits: only the account's master key is accepted. Auth routes enforce 10/min rate limits per Stellar account (with doubled penalty on 401 token failures) backed by Redis (or in-memory fallback) and include `Retry-After` on 429. (multisig accounts and contract accounts / passkey wallets are backlog items: Horizon signer lookup, SEP-45). Contract ids (`C...`) are rejected with 400.
 
 Onboarding: after the token, `GET /users/me` returns `username: null` and `card: null`; `POST /users/username { username }` (3–32 chars, `[a-z0-9_]`, once per address) sets it and creates the card. Mock cards have `issuer: "MOCK"`; show the badge.
 
@@ -94,7 +94,7 @@ Onboarding: after the token, `GET /users/me` returns `username: null` and `card:
 | 401 | Unauthorized | missing or expired JWT, rejected challenge, invalid webhook HMAC |
 | 404 | Not Found | user / card / deposit / plan / schedule not found |
 | 409 | Conflict | username already set or taken, card not active |
-| 429 | Too Many Requests | 120/min per IP; auth routes 30/min; webhooks 600/min |
+| 429 | Too Many Requests | 120/min per IP; auth routes 30/min per IP, 10/min per account (401 failures count double); webhooks 600/min; returns `Retry-After` header |
 
 ---
 

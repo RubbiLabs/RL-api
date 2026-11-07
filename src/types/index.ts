@@ -7,6 +7,7 @@ import type { ICardIssuer } from "../lib/card-issuer/index.js"
 
 declare module "fastify" {
   interface FastifyInstance {
+    accountRateLimitStore?: import("../lib/rate-limit/account-limiter.js").RateLimiterStore
     prisma: PrismaClient
     redis: Redis
     cardIssuer: ICardIssuer
