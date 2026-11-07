@@ -89,6 +89,7 @@ const envSchema = z
     WEB_AUTH_DOMAIN: z.string().min(1),
 
     INDEXER_POLL_INTERVAL_MS: z.coerce.number().int().min(500).default(5_000),
+    INDEXER_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
     // Ledger to start from on the very first run. Defaults to the latest ledger.
     INDEXER_START_LEDGER: z.preprocess(
       blankToUndefined,

@@ -13,7 +13,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:push": "prisma db push",
     "process-pending-unloads": "bun run scripts/process-pending-unloads.ts",
-    "prisma:deploy": "prisma migrate deploy"
+    "prisma:deploy": "prisma migrate deploy",
+    "indexer:reprocess": "bun run scripts/indexer-reprocess.ts"
   },
   "dependencies": {
     "@fastify/cors": "11.3.1",

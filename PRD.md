@@ -378,3 +378,10 @@ Swagger UI: `GET /docs`.
 ## 20. Backlog pointers (Drips Wave)
 
 SEP-45 auth for contract accounts; multisig-aware SEP-10 (Horizon signer lookup); fee-bump sponsorship; Sudo adapter hardened with recorded fixtures (fund idempotency, defund endpoint); indexer gap backfill from `ChainGap`; keeper metrics and alerting; notifications on `charge_failed` / `disburse_failed`; rename `settle_card_spend` / `credit_refund` to `load_card` / `unload_card` in a contract upgrade.
+
+
+### Indexer Dead-Letter Queue & Resilient Processing
+- **Exponential Backoff**: Transient errors and failing events are retried with exponential backoff without blocking already-applied events earlier in the page.
+- **Dead-Letter Storage (`DeadLetterEvent`)**: Poison-pill events that fail consecutively for `INDEXER_MAX_ATTEMPTS` (default 5) are persisted in `DeadLetterEvent` and marked in `ProcessedEvent` in the same database transaction.
+- **Health Reporting**: `GET /health` reports `status: "degraded"` (HTTP 200) whenever unresolved dead letters exist, including total count and the ID of the oldest unresolved event.
+- **Reprocessing Tooling**: `bun run indexer:reprocess [--id <eventId>] [--all] [--dry-run]` allows operators to replay and apply repaired events once off-chain state is corrected.
