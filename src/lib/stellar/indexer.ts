@@ -3,6 +3,8 @@ import type { rpc } from "@stellar/stellar-sdk"
 
 import { EventDecodeError, decodeRpcEvent, toRubbiEvent, type DecodedEvent } from "./events.js"
 import { prepareEffect, type ChainReads, type HandlerLogger } from "./handlers.js"
+import { alerts } from "../alerts.js"
+import { metrics } from "../metrics.js"
 
 export const CURSOR_ID = "stellar"
 export const PAGE_LIMIT = 100
@@ -133,6 +135,8 @@ export class Indexer {
       await this.opts.prisma.chainGap.create({
         data: { ...gap, reason: error instanceof Error ? error.message : String(error) },
       })
+      metrics.incIndexerUnresolvedGaps()
+      void alerts.dispatch("indexer_gap_detected", `Indexer gap detected between ledgers ${gap.fromLedger} and ${gap.toLedger}`, gap)
       return this.opts.rpc.getEvents({ filters, startLedger: health.oldestLedger, limit: PAGE_LIMIT })
     }
   }
@@ -160,6 +164,9 @@ export class Indexer {
         create: { id: CURSOR_ID, cursor, lastLedger },
       })
     }
+
+    const lag = Math.max(0, page.latestLedger - lastLedger)
+    metrics.setIndexerProgress(lastLedger, page.latestLedger, lag)
 
     return { fetched: page.events.length, applied, skipped, lastLedger, cursor }
   }

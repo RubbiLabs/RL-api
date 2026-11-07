@@ -111,6 +111,7 @@ Onboarding: after the token, `GET /users/me` returns `username: null` and `card:
 
 | Method | Path | Auth | Body / Returns |
 |---|---|---|---|
+| GET | `/metrics` | `METRICS_TOKEN` (optional) | Prometheus text exposition format |
 | GET | `/auth/challenge?account=G...` | — | `{ transaction, network_passphrase }` |
 | POST | `/auth/token` | — | `{ transaction }` → `{ token, user: { id, stellarAddress, username } }` |
 | GET | `/users/me` | JWT | `{ id, stellarAddress, username, walletBalance, cardBalance, card }` |

@@ -9,6 +9,7 @@ import Fastify, { FastifyInstance } from "fastify"
 import { Worker } from "bullmq"
 
 import { env } from "./config/index.js"
+import { metrics } from "./lib/metrics.js"
 import { createCardIssuer } from "./lib/card-issuer/factory.js"
 import { cardLoadQueue, cardUnloadQueue, closeQueueResources } from "./lib/queue.js"
 import { contractIds, rpcServer } from "./lib/stellar/client.js"
@@ -118,7 +119,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get("/health", {
     schema: {
       tags: ["system"],
-      description: "Service health check",
+      description: "Service health check including keeper and indexer status",
       response: {
         200: {
           type: "object",
@@ -126,15 +127,103 @@ export async function buildApp(): Promise<FastifyInstance> {
             status: { type: "string" },
             service: { type: "string" },
             timestamp: { type: "string", format: "date-time" },
+            keeper: {
+              type: "object",
+              properties: {
+                lastRunAt: { type: "string", nullable: true },
+                lastResult: { type: "string", nullable: true },
+                heldItems: { type: "number" },
+              },
+            },
+            indexer: {
+              type: "object",
+              properties: {
+                cursorLedger: { type: "number", nullable: true },
+                latestLedger: { type: "number", nullable: true },
+                lagLedgers: { type: "number", nullable: true },
+              },
+            },
+          },
+        },
+        503: {
+          type: "object",
+          properties: {
+            status: { type: "string" },
+            service: { type: "string" },
+            timestamp: { type: "string", format: "date-time" },
+            reason: { type: "string" },
+            keeper: { type: "object" },
+            indexer: { type: "object" },
           },
         },
       },
     },
-    handler: async () => ({
-      status: "ok",
-      service: "rubbi-api",
-      timestamp: new Date().toISOString(),
-    }),
+    handler: async (request, reply) => {
+      const keeper = metrics.getKeeperHealth()
+      const indexer = metrics.getIndexerHealth()
+      const now = Date.now()
+
+      let staleKeeper = false
+      let keeperReason = ""
+      if (keeper.lastRunAt) {
+        const lastRunMs = new Date(keeper.lastRunAt).getTime()
+        const diffSec = (now - lastRunMs) / 1000
+        if (diffSec > env.KEEPER_STALE_THRESHOLD_SECONDS) {
+          staleKeeper = true
+          keeperReason = `keeper is stale: last run was ${Math.round(diffSec)}s ago`
+        }
+      }
+
+      let laggingIndexer = false
+      let indexerReason = ""
+      if (indexer.lagLedgers !== null && indexer.lagLedgers > env.INDEXER_MAX_LAG_LEDGERS) {
+        laggingIndexer = true
+        indexerReason = `indexer lag (${indexer.lagLedgers} ledgers) exceeds threshold (${env.INDEXER_MAX_LAG_LEDGERS})`
+      }
+
+      if (staleKeeper || laggingIndexer) {
+        const reason = [keeperReason, indexerReason].filter(Boolean).join("; ")
+        return reply.status(503).send({
+          status: "degraded",
+          service: "rubbi-api",
+          timestamp: new Date().toISOString(),
+          reason,
+          keeper,
+          indexer,
+        })
+      }
+
+      return reply.send({
+        status: "ok",
+        service: "rubbi-api",
+        timestamp: new Date().toISOString(),
+        keeper,
+        indexer,
+      })
+    },
+  })
+
+  app.get("/metrics", {
+    schema: {
+      tags: ["system"],
+      description: "Prometheus text exposition format metrics",
+    },
+    handler: async (request, reply) => {
+      if (env.METRICS_TOKEN) {
+        const authHeader = request.headers.authorization
+        const tokenHeader = request.headers["x-metrics-token"]
+        const queryToken = (request.query as any)?.token
+        const matches =
+          authHeader === `Bearer ${env.METRICS_TOKEN}` ||
+          tokenHeader === env.METRICS_TOKEN ||
+          queryToken === env.METRICS_TOKEN
+        if (!matches) {
+          throw app.httpErrors.unauthorized("Invalid metrics token")
+        }
+      }
+      reply.header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+      return reply.send(metrics.renderPrometheus())
+    },
   })
 
   await app.register(async (api) => {

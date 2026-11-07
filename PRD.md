@@ -134,6 +134,10 @@ See `.env.example`. Validated by Zod in `src/config/index.ts`; the process refus
 | `INDEXER_START_LEDGER` | no | first run only; defaults to the latest ledger |
 | `KEEPER_CRON` | | default `*/10 * * * *` |
 | `KEEPER_HOLD_SECONDS` | | default 21600 (6 h): how long a payee without a usable trustline is left alone |
+| `METRICS_TOKEN` | no | optional token protecting `GET /metrics` |
+| `ALERT_WEBHOOK_URL` | no | optional webhook URL receiving alerts for keeper failures, low XLM, and indexer gaps |
+| `KEEPER_MIN_XLM` | | default 5: minimum keeper XLM balance triggering an alert |
+| `INDEXER_MAX_LAG_LEDGERS` | | default 100: indexer lag threshold triggering health 503 |
 | `CARD_ISSUER` | | `mock` (default) or `sudo` |
 | `SUDO_API_KEY`, `SUDO_WEBHOOK_SECRET` | with `sudo` | `SUDO_WEBHOOK_SECRET` is also required in production with the mock issuer |
 | `SUDO_BASE_URL`, `SUDO_DEFAULT_CUSTOMER_ID` | no | |

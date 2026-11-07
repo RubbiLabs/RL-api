@@ -97,6 +97,11 @@ const envSchema = z
     KEEPER_CRON: z.string().min(1).default("*/10 * * * *"),
     // How long a payee without a usable USDC trustline is left alone by the keeper.
     KEEPER_HOLD_SECONDS: z.coerce.number().int().min(60).default(21_600),
+    KEEPER_MIN_XLM: z.coerce.number().positive().default(5),
+    KEEPER_STALE_THRESHOLD_SECONDS: z.coerce.number().int().positive().default(1800),
+    INDEXER_MAX_LAG_LEDGERS: z.coerce.number().int().positive().default(100),
+    METRICS_TOKEN: optionalString(),
+    ALERT_WEBHOOK_URL: z.preprocess(blankToUndefined, z.string().url().optional()),
 
     CARD_ISSUER: z.enum(["mock", "sudo"]).default("mock"),
     SUDO_API_KEY: optionalString(),
