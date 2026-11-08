@@ -378,3 +378,9 @@ Swagger UI: `GET /docs`.
 ## 20. Backlog pointers (Drips Wave)
 
 SEP-45 auth for contract accounts; multisig-aware SEP-10 (Horizon signer lookup); fee-bump sponsorship; Sudo adapter hardened with recorded fixtures (fund idempotency, defund endpoint); indexer gap backfill from `ChainGap`; keeper metrics and alerting; notifications on `charge_failed` / `disburse_failed`; rename `settle_card_spend` / `credit_refund` to `load_card` / `unload_card` in a contract upgrade.
+
+
+### Indexer Gap Recovery & Backfill Tooling
+- **Retention Gap Detection**: When saved cursor age exceeds the Soroban RPC retention window, the indexer records a `ChainGap` entry (`fromLedger`, `toLedger`, `reason`).
+- **Archive Backfill Tooling (`bun run backfill-gaps`)**: Operators can trigger historical backfills over unindexed ledger ranges from archive RPC endpoints, applying events through the identical idempotent `applyEvent` transaction pipeline.
+- **Health & Monitoring**: `GET /health` reports `indexer.unresolvedGaps` and marks service `degraded` if any unindexed gaps exist.
