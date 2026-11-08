@@ -126,15 +126,37 @@ export async function buildApp(): Promise<FastifyInstance> {
             status: { type: "string" },
             service: { type: "string" },
             timestamp: { type: "string", format: "date-time" },
+            indexer: {
+              type: "object",
+              properties: {
+                unresolvedGaps: { type: "number" },
+              },
+            },
           },
         },
       },
     },
-    handler: async () => ({
-      status: "ok",
-      service: "rubbi-api",
-      timestamp: new Date().toISOString(),
-    }),
+    handler: async () => {
+      let unresolvedGaps = 0
+      try {
+        unresolvedGaps = await app.prisma.chainGap.count({
+          where: { resolvedAt: null },
+        })
+      } catch {
+        // In case database table is not initialized yet
+      }
+
+      const status = unresolvedGaps > 0 ? "degraded" : "ok"
+
+      return {
+        status,
+        service: "rubbi-api",
+        timestamp: new Date().toISOString(),
+        indexer: {
+          unresolvedGaps,
+        },
+      }
+    },
   })
 
   await app.register(async (api) => {

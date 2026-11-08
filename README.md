@@ -236,3 +236,22 @@ Related repositories: [RL-smart-contracts](https://github.com/RubbiLabs/RL-smart
 ## License
 
 [MIT](LICENSE).
+
+
+### Indexer Gap Recovery and Backfill Tooling
+
+When the saved cursor falls behind the Soroban RPC's retention window (`getHealth().oldestLedger`), the indexer records a `ChainGap` entry with `[fromLedger, toLedger]` and resumes indexing from the oldest available ledger.
+
+Operators can recover and backfill missed historical events using the backfill script:
+```bash
+# Backfill all unresolved chain gaps using the default or specified archive RPC
+bun run backfill-gaps
+
+# Dry-run inspection without mutating database
+bun run backfill-gaps --dry-run
+
+# Backfill using a dedicated archive RPC provider
+bun run backfill-gaps --rpc https://archive-rpc.stellar.org
+```
+
+Events are applied in ledger order using the same idempotent deduplication pipeline (`ProcessedEvent`) as the live indexer, ensuring no duplicates occur even if run repeatedly. Once the range is processed, `resolvedAt` is set on the `ChainGap`.
