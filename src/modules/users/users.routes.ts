@@ -8,6 +8,8 @@ const userResponse = {
     id: { type: "string" },
     stellarAddress: { type: "string" },
     username: { type: "string", nullable: true },
+    email: { type: "string", nullable: true },
+    notifyEmail: { type: "boolean" },
     walletBalance: { type: "string", description: "USDC in the user's vault (mirror)" },
     cardBalance: { type: "string", description: "USDC loaded on the card" },
     card: {
@@ -65,5 +67,22 @@ export async function registerUsersRoutes(app: FastifyInstance) {
       response: { 200: userResponse, 404: errorResponse, 409: errorResponse },
     },
     handler: controller.username,
+  })
+
+  app.patch("/users/me", {
+    onRequest: app.authenticate,
+    schema: {
+      tags: ["users"],
+      description: "Update user profile settings (email, notifyEmail)",
+      body: {
+        type: "object",
+        properties: {
+          email: { type: "string", format: "email", nullable: true },
+          notifyEmail: { type: "boolean" },
+        },
+      },
+      response: { 200: userResponse, 404: errorResponse },
+    },
+    handler: controller.updateProfile,
   })
 }

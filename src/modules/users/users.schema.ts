@@ -10,3 +10,10 @@ export const usernameBodySchema = z.object({
 })
 
 export type UsernameBody = z.infer<typeof usernameBodySchema>
+
+export const updateProfileBodySchema = z.object({
+  email: z.string().email("Invalid email format").nullable().optional(),
+  notifyEmail: z.boolean().optional(),
+})
+
+export type UpdateProfileBody = z.infer<typeof updateProfileBodySchema>

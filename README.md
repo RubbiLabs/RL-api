@@ -236,3 +236,13 @@ Related repositories: [RL-smart-contracts](https://github.com/RubbiLabs/RL-smart
 ## License
 
 [MIT](LICENSE).
+
+### Notifications (Issue #12)
+
+In-app and optional email notifications emitted by chain events and card processing:
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/notifications` | JWT | List caller's notifications newest first (`unread=true\|false`, `limit`, `cursor`) |
+| `POST` | `/api/v1/notifications/:id/read` | JWT | Mark a notification as read |
+| `PATCH` | `/api/v1/users/me` | JWT | Update notification preferences (`email`, `notifyEmail`) |
