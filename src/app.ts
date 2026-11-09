@@ -1,3 +1,4 @@
+import { registerEventsRoutes } from "./modules/events/events.routes.js"
 import "./types/index.js"
 
 import fastifyCors from "@fastify/cors"
@@ -21,6 +22,7 @@ import { registerDepositsRoutes } from "./modules/deposits/deposits.routes.js"
 import { registerSubscriptionsRoutes } from "./modules/subscriptions/subscriptions.routes.js"
 import { registerTransactionsRoutes } from "./modules/transactions/transactions.routes.js"
 import { registerUsersRoutes } from "./modules/users/users.routes.js"
+import { registerNotificationsRoutes } from "./modules/notifications/notifications.routes.js"
 import { registerWebhooksRoutes } from "./modules/webhooks/webhooks.routes.js"
 import { registerPayrollRoutes } from "./modules/payroll/payroll.routes.js"
 import { registerDashboardRoutes } from "./modules/dashboard/dashboard.routes.js"
@@ -79,6 +81,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         { name: "system" },
         { name: "auth", description: "SEP-10 web authentication" },
         { name: "users" },
+        { name: "notifications", description: "In-app and email notifications" },
         { name: "cards", description: "Card, loads and unloads" },
         { name: "deposits" },
         { name: "transactions", description: "Wallet and card ledgers" },
@@ -140,6 +143,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(async (api) => {
     await registerAuthRoutes(api)
     await registerUsersRoutes(api)
+    await registerNotificationsRoutes(api)
     await registerCardsRoutes(api)
     await registerDepositsRoutes(api)
     await registerTransactionsRoutes(api)
@@ -148,6 +152,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     await registerDashboardRoutes(api)
     await registerStellarRoutes(api)
     await registerWebhooksRoutes(api)
+    await registerEventsRoutes(api)
     if (shouldRegisterDevRoutes(env)) {
       await registerDevRoutes(api)
     }

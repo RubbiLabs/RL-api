@@ -378,3 +378,10 @@ Swagger UI: `GET /docs`.
 ## 20. Backlog pointers (Drips Wave)
 
 SEP-45 auth for contract accounts; multisig-aware SEP-10 (Horizon signer lookup); fee-bump sponsorship; Sudo adapter hardened with recorded fixtures (fund idempotency, defund endpoint); indexer gap backfill from `ChainGap`; keeper metrics and alerting; notifications on `charge_failed` / `disburse_failed`; rename `settle_card_spend` / `credit_refund` to `load_card` / `unload_card` in a contract upgrade.
+
+
+### Live Updates Architecture (SSE) (#13)
+
+- Endpoint: `GET /api/v1/events/stream`
+- Backed by Redis Pub/Sub (`events:channel:{userId}`) and bounded list replay buffer (`events:buffer:{userId}`, 100 items, 1h TTL).
+- Immediate dispatch upon card-movement status transitions (PENDING -> SETTLED -> COMPLETED / FAILED) eliminating UI polling lag.
