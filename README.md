@@ -236,3 +236,12 @@ Related repositories: [RL-smart-contracts](https://github.com/RubbiLabs/RL-smart
 ## License
 
 [MIT](LICENSE).
+
+
+### Live Updates (Server-Sent Events) (#13)
+
+The API provides a real-time Server-Sent Events endpoint:
+- `GET /api/v1/events/stream`: Emits `movement`, `walletBalance`, `subscription`, `schedule` and `notification` events.
+- **Authentication**: Accepted via `Authorization: Bearer <token>` header or `?token=<token>` query parameter.
+- **Resumption**: Pass `Last-Event-ID` header or `?lastEventId=<id>` to automatically replay events buffered during connection drops.
+- **Heartbeat**: Emits keepalive comments every 25 seconds to preserve intermediate proxies.

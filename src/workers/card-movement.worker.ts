@@ -11,6 +11,7 @@ function deps(app: FastifyInstance): MovementDeps {
     vault: makeVaultClient(),
     cardIssuer: app.cardIssuer,
     log: app.log.child({ component: "card-movements" }),
+    redis: app.redis,
     enqueueUnload: async (movementId) => {
       await cardUnloadQueue.add("card-unload", { movementId }, { jobId: movementId })
     },

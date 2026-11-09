@@ -1,3 +1,6 @@
+import type { Redis } from "ioredis"
+import { publishUserEvent } from "../lib/pubsub.js"
+import { emitNotification } from "../lib/notify/index.js"
 import { BalanceAccount, CardMoveStatus, Prisma, PrismaClient, TransactionType } from "@prisma/client"
 import { createHash, randomUUID } from "node:crypto"
 
@@ -35,6 +38,7 @@ export interface MovementDeps {
   cardIssuer: ICardIssuer
   log: MovementLogger
   enqueueUnload: (movementId: string) => Promise<void>
+  redis?: Redis
 }
 
 /** Idempotency key for the vault: sha256 of the movement id, hex. */
@@ -52,6 +56,17 @@ async function fail(deps: MovementDeps, movementId: string, reason: string) {
     where: { id: movementId, status: { notIn: [CardMoveStatus.COMPLETED, CardMoveStatus.FAILED] } },
     data: { status: CardMoveStatus.FAILED, failureReason: reason.slice(0, 500) },
   })
+  const mov = await deps.prisma.cardMovement.findUnique({
+    where: { id: movementId },
+    select: { userId: true, amount: true },
+  })
+  if (mov) {
+    await emitNotification(deps.prisma, {
+      userId: mov.userId,
+      type: "card_load_failed",
+      payload: { movementId, amount: mov.amount.toString(), reason },
+    }, deps.log)
+  }
 }
 
 async function loadMovement(deps: MovementDeps, movementId: string) {
