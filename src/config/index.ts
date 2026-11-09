@@ -107,6 +107,13 @@ const envSchema = z
     JWT_SECRET: z.string().min(32),
     JWT_EXPIRES_IN: z.string().default("24h"),
 
+    // Notifications email transport (optional)
+    NOTIFY_EMAIL_HOST: optionalString(),
+    NOTIFY_EMAIL_PORT: z.preprocess(blankToUndefined, z.coerce.number().int().min(1).max(65535).optional()),
+    NOTIFY_EMAIL_USER: optionalString(),
+    NOTIFY_EMAIL_PASS: optionalString(),
+    NOTIFY_EMAIL_FROM: optionalString(),
+
     // Browser origins allowed to call the API (the frontend). Exact origins only.
     CORS_ORIGINS: corsOrigins,
   })

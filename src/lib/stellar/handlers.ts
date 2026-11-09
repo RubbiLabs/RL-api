@@ -1,3 +1,4 @@
+import { emitNotification } from "../notify/index.js"
 import { BalanceAccount, CardMoveStatus, Prisma, SubStatus, TransactionType } from "@prisma/client"
 
 import { stroopsToDecimal } from "./amount.js"
@@ -352,6 +353,22 @@ async function subscriptionsEffect(
           where: { onChainSubId: event.sub_id },
           data: { status: SubStatus.PAST_DUE },
         })
+        const sub = await tx.subscription.findUnique({
+          where: { onChainSubId: event.sub_id },
+          include: { plan: true },
+        })
+        if (sub?.userId) {
+          await emitNotification(tx, {
+            userId: sub.userId,
+            type: "charge_failed",
+            payload: {
+              subId: event.sub_id.toString(),
+              planName: sub.plan.name,
+              amount: sub.plan.amount.toString(),
+              reason: "insufficient_balance",
+            },
+          }, ctx.log)
+        }
       }
 
     case "charge_skipped":
@@ -468,7 +485,7 @@ async function payrollEffect(
     }
 
     case "disburse_failed":
-      return async () => {
+      return async (tx) => {
         ctx.log.warn(
           meta(raw, {
             scheduleId: event.schedule_id.toString(),
@@ -478,6 +495,23 @@ async function payrollEffect(
           }),
           "disbursement failed (period stays owed)",
         )
+        const sched = await tx.payrollSchedule.findUnique({
+          where: { onChainId: event.schedule_id },
+          select: { employerUserId: true, label: true },
+        })
+        if (sched?.employerUserId) {
+          await emitNotification(tx, {
+            userId: sched.employerUserId,
+            type: "disburse_failed",
+            payload: {
+              scheduleId: event.schedule_id.toString(),
+              reason: event.reason,
+              escrow: event.escrow.toString(),
+              amount: event.amount.toString(),
+              label: sched.label,
+            },
+          }, ctx.log)
+        }
       }
 
     case "schedule_paused":

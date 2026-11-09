@@ -24,6 +24,8 @@ const MODELS: Record<string, ModelSpec> = {
     },
     defaults: () => ({
       username: null,
+      email: null,
+      notifyEmail: true,
       walletBalance: new Prisma.Decimal(0),
       cardBalance: new Prisma.Decimal(0),
     }),
@@ -53,6 +55,11 @@ const MODELS: Record<string, ModelSpec> = {
   chainCursor: { uniques: [["id"]] },
   processedEvent: { uniques: [["eventId"]] },
   chainGap: { uniques: [["id"]], defaults: () => ({ resolvedAt: null }) },
+  notification: {
+    uniques: [["id"]],
+    relations: { user: { model: "user", localField: "userId", foreignField: "id" } },
+    defaults: () => ({ readAt: null, createdAt: new Date() }),
+  },
 }
 
 let idCounter = 0

@@ -36,6 +36,8 @@ export async function getMe(app: FastifyInstance, stellarAddress: string) {
     id: user.id,
     stellarAddress: user.stellarAddress,
     username: user.username,
+    email: user.email,
+    notifyEmail: user.notifyEmail,
     walletBalance: user.walletBalance.toString(),
     cardBalance: user.cardBalance.toString(),
     card: serializeCard(user.card),
@@ -117,8 +119,45 @@ export async function setUsername(
     id: updated.id,
     stellarAddress: updated.stellarAddress,
     username: updated.username,
+    email: updated.email,
+    notifyEmail: updated.notifyEmail,
     walletBalance: updated.walletBalance.toString(),
     cardBalance: updated.cardBalance.toString(),
     card: serializeCard(card),
+  }
+}
+
+export async function updateProfile(
+  app: FastifyInstance,
+  stellarAddress: string,
+  data: { email?: string | null; notifyEmail?: boolean },
+) {
+  const user = await app.prisma.user.findUnique({
+    where: { stellarAddress },
+    include: { card: true },
+  })
+
+  if (!user) {
+    throw app.httpErrors.notFound("User not found")
+  }
+
+  const updated = await app.prisma.user.update({
+    where: { id: user.id },
+    data: {
+      ...(data.email !== undefined ? { email: data.email } : {}),
+      ...(data.notifyEmail !== undefined ? { notifyEmail: data.notifyEmail } : {}),
+    },
+    include: { card: true },
+  })
+
+  return {
+    id: updated.id,
+    stellarAddress: updated.stellarAddress,
+    username: updated.username,
+    email: updated.email,
+    notifyEmail: updated.notifyEmail,
+    walletBalance: updated.walletBalance.toString(),
+    cardBalance: updated.cardBalance.toString(),
+    card: serializeCard(updated.card),
   }
 }

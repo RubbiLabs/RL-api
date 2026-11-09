@@ -21,6 +21,8 @@ model User {
   username       String?  @unique
   walletBalance  Decimal  @default(0) @db.Decimal(20, 7)
   cardBalance    Decimal  @default(0) @db.Decimal(20, 7)
+  email          String?
+  notifyEmail    Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -30,6 +32,7 @@ model User {
   subscriptions    Subscription[]
   payrollSchedules PayrollSchedule[]
   cardMovements    CardMovement[]
+  notifications    Notification[]
 }
 
 model Card {
@@ -253,4 +256,18 @@ enum ScheduleStatus {
   ACTIVE
   PAUSED
   CANCELLED
+}
+
+/// A user notification emitted on important events (Issue #12).
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  payload   Json
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
 }

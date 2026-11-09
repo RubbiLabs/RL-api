@@ -378,3 +378,18 @@ Swagger UI: `GET /docs`.
 ## 20. Backlog pointers (Drips Wave)
 
 SEP-45 auth for contract accounts; multisig-aware SEP-10 (Horizon signer lookup); fee-bump sponsorship; Sudo adapter hardened with recorded fixtures (fund idempotency, defund endpoint); indexer gap backfill from `ChainGap`; keeper metrics and alerting; notifications on `charge_failed` / `disburse_failed`; rename `settle_card_spend` / `credit_refund` to `load_card` / `unload_card` in a contract upgrade.
+
+### 4.9. Notifications & Event Alerts (Issue #12)
+
+- **Storage**: `Notification` model with `userId`, `type`, `payload`, `readAt`, and `createdAt`.
+- **Triggers**:
+  - `charge_failed`: emitted to subscriber on subscription payment failure (`PAST_DUE`).
+  - `charged`: emitted to subscriber on successful subscription renewal.
+  - `disburse_failed`: emitted to employer when payroll escrow is insufficient.
+  - `disbursed`: emitted to employee when payroll disbursement settles.
+  - `card_load_completed` / `card_load_failed`: emitted on card funding outcome.
+  - `card_unload_completed`: emitted on card defunding refund.
+  - `refund_credited`: emitted when on-chain treasury refund is credited.
+- **Delivery**:
+  - In-app via `GET /api/v1/notifications` with unread filtering and cursor pagination.
+  - Optional transactional email channel when `NOTIFY_EMAIL_*` environment variables are present and user profile includes verified email address.
